@@ -1,0 +1,56 @@
+name: Build FlyLog APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repozitáře
+        uses: actions/checkout@v4
+
+      - name: Nastavení Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Nastavení Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter verze
+        run: flutter --version
+
+      # Doplní případně chybějící generované soubory platformy (gradle wrapper apod.).
+      # Existující soubory projektu se NEPŘEPISUJÍ.
+      - name: Doplnění Android scaffoldingu
+        run: flutter create --platforms=android --org com.muchovi --project-name flylog .
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: flutter build apk --release
+        run: flutter build apk --release
+
+      - name: Uložení artefaktu
+        uses: actions/upload-artifact@v4
+        with:
+          name: flylog-release-${{ github.sha }}
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
