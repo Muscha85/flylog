@@ -1,1 +1,2 @@
 Po každé dokončené úpravě kódu nebo opravě chyby automaticky spusť v terminálu skript `.\build_and_sync.ps1`, čímž se sestaví nové APK na Google Disk a zálohuje kód na GitHub.
+
