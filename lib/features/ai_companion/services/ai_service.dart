@@ -131,28 +131,31 @@ class AiService {
   }
 
   /// Ověří spojení s Gemini API krátkým dotazem.
-  Future<String> testConnection() async {
+  Future<String> testConnection({String? modelOverride, String? apiKeyOverride}) async {
     final sw = Stopwatch()..start();
-    if (!_config.hasGeminiKey) {
+    final key = apiKeyOverride ?? _config.geminiApiKey;
+    final modelName = modelOverride ?? _config.geminiModel;
+
+    if (key.trim().isEmpty) {
       AppLogger.I.warn(_module, 'test_connection_no_key');
       return 'Není zadán Gemini API klíč – AI běží v offline režimu.';
     }
     try {
-      final model = GenerativeModel(model: _config.geminiModel, apiKey: _config.geminiApiKey);
+      final model = GenerativeModel(model: modelName, apiKey: key);
       final response = await model
           .generateContent([Content.text('Odpověz jedním slovem česky: funguješ?')]).timeout(timeout);
       final text = response.text?.trim() ?? '';
       AppLogger.I.info(_module, 'test_connection_ok', metrics: {
-        'model': _config.geminiModel,
+        'model': modelName,
         'duration_ms': sw.elapsedMilliseconds,
       });
-      return 'Spojení OK (${sw.elapsedMilliseconds} ms): $text';
+      return 'Spojení OK ($modelName, ${sw.elapsedMilliseconds} ms): $text';
     } catch (e, st) {
       AppLogger.I.error(_module, 'test_connection_failed', error: e, stackTrace: st, metrics: {
-        'model': _config.geminiModel,
+        'model': modelName,
         'duration_ms': sw.elapsedMilliseconds,
       });
-      return 'Chyba spojení: ${_humanError(e)}';
+      return 'Chyba spojení ($modelName): ${_humanError(e)}';
     }
   }
 

@@ -43,7 +43,7 @@ class AppConfig extends ChangeNotifier {
   static const String appName = 'FlyLog';
   static const String appVersion = '0.1.0';
   static const String webPublishDomain = 'vylety.muchovi.com';
-  static const String defaultGeminiModel = 'gemini-2.5-flash';
+  static const String defaultGeminiModel = 'gemini-3.8-flash';
 
   /// Klíč dodaný při buildu (`--dart-define=GEMINI_API_KEY=...`).
   static const String _buildTimeApiKey = String.fromEnvironment('GEMINI_API_KEY');

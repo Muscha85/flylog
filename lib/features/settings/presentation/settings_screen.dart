@@ -141,7 +141,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         controller: _modelController,
                         decoration: const InputDecoration(
                           labelText: 'Gemini Model',
-                          hintText: 'gemini-2.5-flash',
+                          hintText: 'gemini-3.8-flash',
                           prefixIcon: Icon(Icons.memory),
                           border: OutlineInputBorder(),
                         ),
@@ -207,10 +207,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       SegmentedButton<ThemeMode>(
+                        style: ButtonStyle(
+                          padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 8)),
+                          visualDensity: VisualDensity.compact,
+                          textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12)),
+                        ),
                         segments: const [
-                          ButtonSegment(value: ThemeMode.system, label: Text('Systém'), icon: Icon(Icons.brightness_auto)),
-                          ButtonSegment(value: ThemeMode.light, label: Text('Světlý'), icon: Icon(Icons.light_mode)),
-                          ButtonSegment(value: ThemeMode.dark, label: Text('Tmavý'), icon: Icon(Icons.dark_mode)),
+                          ButtonSegment(value: ThemeMode.system, label: Text('Systém'), icon: Icon(Icons.brightness_auto, size: 16)),
+                          ButtonSegment(value: ThemeMode.light, label: Text('Světlý'), icon: Icon(Icons.light_mode, size: 16)),
+                          ButtonSegment(value: ThemeMode.dark, label: Text('Tmavý'), icon: Icon(Icons.dark_mode, size: 16)),
                         ],
                         selected: {_config.themeMode},
                         onSelectionChanged: (set) => _config.setThemeMode(set.first),
@@ -281,8 +286,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _apiTestResult = null;
     });
 
+    final currentKey = _apiKeyController.text.trim().isNotEmpty
+        ? _apiKeyController.text.trim()
+        : _config.geminiApiKey;
+    final currentModel = _modelController.text.trim().isNotEmpty
+        ? _modelController.text.trim()
+        : _config.geminiModel;
+
     final ai = ServiceLocator.ai;
-    final res = await ai.testConnection();
+    final res = await ai.testConnection(
+      modelOverride: currentModel,
+      apiKeyOverride: currentKey,
+    );
 
     if (mounted) {
       setState(() {
