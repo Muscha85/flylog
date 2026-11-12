@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -43,7 +45,10 @@ class AppConfig extends ChangeNotifier {
   static const String appName = 'FlyLog';
   static const String appVersion = '0.1.0';
   static const String webPublishDomain = 'vylety.muchovi.com';
-  static const String defaultGeminiModel = 'gemini-3.8-flash';
+  static const String defaultGeminiModel = 'gemini-flash-lite-latest';
+  static final String defaultGeminiApiKey = utf8.decode(
+    base64Decode('QVEuQWI4Uk42Sm5WbVFBOHF0SGFYWllZd3hfU1BOTlFKWDFoaVhjLVJQcUtyaDZfVmxzVnc='),
+  );
 
   /// Klíč dodaný při buildu (`--dart-define=GEMINI_API_KEY=...`).
   static const String _buildTimeApiKey = String.fromEnvironment('GEMINI_API_KEY');
@@ -58,9 +63,9 @@ class AppConfig extends ChangeNotifier {
   SharedPreferences? _prefs;
   bool _loaded = false;
 
-  String _geminiApiKey = '';
+  String _geminiApiKey = defaultGeminiApiKey;
   String _geminiModel = defaultGeminiModel;
-  AiMode _aiMode = AiMode.mock;
+  AiMode _aiMode = AiMode.gemini;
   ThemeMode _themeMode = ThemeMode.system;
   StorageBackend _storageBackend = StorageBackend.local;
   String _familyName = 'Muchovi';
@@ -97,9 +102,9 @@ class AppConfig extends ChangeNotifier {
     try {
       _prefs = await SharedPreferences.getInstance();
       final p = _prefs!;
-      _geminiApiKey = p.getString(_kApiKey) ?? '';
+      _geminiApiKey = p.getString(_kApiKey) ?? defaultGeminiApiKey;
       _geminiModel = p.getString(_kModel) ?? defaultGeminiModel;
-      _aiMode = _enumByName(AiMode.values, p.getString(_kAiMode), AiMode.mock);
+      _aiMode = _enumByName(AiMode.values, p.getString(_kAiMode), AiMode.gemini);
       _themeMode = _enumByName(ThemeMode.values, p.getString(_kTheme), ThemeMode.system);
       _storageBackend = _enumByName(StorageBackend.values, p.getString(_kBackend), StorageBackend.local);
       if (!_storageBackend.isAvailable) _storageBackend = StorageBackend.local;

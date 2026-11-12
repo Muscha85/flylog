@@ -141,7 +141,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         controller: _modelController,
                         decoration: const InputDecoration(
                           labelText: 'Gemini Model',
-                          hintText: 'gemini-3.8-flash',
+                          hintText: 'gemini-flash-lite-latest',
                           prefixIcon: Icon(Icons.memory),
                           border: OutlineInputBorder(),
                         ),
