@@ -88,7 +88,7 @@ class AiService {
     // Pokusíme se zavolat primární model s retry logikou
     final primaryModel = _config.geminiModel;
     try {
-      final (text, usedModel, usage) = await _generateWithRetry(
+      final (text, usedModel, response) = await _generateWithRetry(
         prompt: prompt,
         initialModel: primaryModel,
         apiKey: _config.geminiApiKey,
@@ -101,6 +101,7 @@ class AiService {
         model: usedModel,
       );
 
+      final usage = response?.usageMetadata;
       AppLogger.I.info(_module, 'generate_story_gemini', metrics: {
         'event_id': event.id,
         'scope': scope,
@@ -226,7 +227,10 @@ class AiService {
     }
 
     if (lastError != null) {
-      Error.throwWithLastError(lastError, lastStackTrace ?? StackTrace.current);
+      if (lastStackTrace != null) {
+        Error.throwWithStackTrace(lastError, lastStackTrace);
+      }
+      throw lastError;
     }
     throw StateError('Nepodařilo se vygenerovat příběh.');
   }
