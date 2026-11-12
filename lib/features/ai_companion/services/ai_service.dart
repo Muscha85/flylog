@@ -36,9 +36,12 @@ class AiStoryResult {
 
 /// AI průvodce – generuje rodinné příběhy z událostí kroniky.
 ///
-/// Pokud je v [AppConfig] zapnutý režim Gemini a je zadán API klíč, volá
-/// Google Gemini. Jinak (nebo při jakékoli chybě) použije lokální
-/// šablonový generátor, takže aplikace funguje vždy i bez sítě.
+/// Vybaveno robustní logikou pro vysokou dostupnost:
+/// - Při chybách 503 (High demand / Unavailable) nebo 429 (Rate limit)
+///   automaticky opakuje volání až 3x s exponenciálním zpožděním (2s, 4s, 8s).
+/// - Pokud i po 3 pokusech primární model selže na 503, automaticky aktivuje
+///   záložní model (fallback: `gemini-3.8-flash-lite`, případně `gemini-3.8-pro`).
+/// - Všechny pokusy a přepnutí fallbacku jsou zaznamenávány do [AppLogger].
 class AiService {
   AiService({AppConfig? config, this.timeout = const Duration(seconds: 45)})
       : _config = config ?? AppConfig.instance;
@@ -47,6 +50,13 @@ class AiService {
   final Duration timeout;
 
   static const String _module = LogModule.ai;
+
+  /// Seznam záložních modelů pro případ přetížení (503).
+  static const List<String> fallbackModels = [
+    'gemini-3.8-flash-lite',
+    'gemini-3.8-pro',
+    'gemini-2.5-flash',
+  ];
 
   /// Vygeneruje příběh celé akce, nebo jen jednoho dne ([day]).
   Future<AiStoryResult> generateStory(EventItem event, {EventDay? day}) async {
@@ -75,34 +85,26 @@ class AiService {
       return result;
     }
 
+    // Pokusíme se zavolat primární model s retry logikou
+    final primaryModel = _config.geminiModel;
     try {
-      final model = GenerativeModel(
-        model: _config.geminiModel,
+      final (text, usedModel, usage) = await _generateWithRetry(
+        prompt: prompt,
+        initialModel: primaryModel,
         apiKey: _config.geminiApiKey,
-        generationConfig: GenerationConfig(temperature: 0.8, maxOutputTokens: 1024),
-        systemInstruction: Content.system(
-          'Jsi laskavý rodinný kronikář. Píšeš česky, vřele a s humorem, '
-          'krátké příběhy pro rodinnou kroniku. Nevymýšlej si fakta, která nejsou v podkladech, '
-          'drž se 1–3 odstavců a nepoužívej Markdown nadpisy.',
-        ),
       );
-      final response = await model.generateContent([Content.text(prompt)]).timeout(timeout);
-      final text = response.text?.trim() ?? '';
-      if (text.isEmpty) {
-        throw StateError('Gemini vrátil prázdnou odpověď (finishReason: '
-            '${response.candidates.isEmpty ? 'none' : response.candidates.first.finishReason?.name})');
-      }
-      final usage = response.usageMetadata;
+
       final result = AiStoryResult(
         text: text,
         fromMock: false,
         durationMs: sw.elapsedMilliseconds,
-        model: _config.geminiModel,
+        model: usedModel,
       );
+
       AppLogger.I.info(_module, 'generate_story_gemini', metrics: {
         'event_id': event.id,
         'scope': scope,
-        'model': _config.geminiModel,
+        'model': usedModel,
         'chars': text.length,
         if (usage?.promptTokenCount != null) 'prompt_tokens': usage!.promptTokenCount,
         if (usage?.candidatesTokenCount != null) 'output_tokens': usage!.candidatesTokenCount,
@@ -112,7 +114,7 @@ class AiService {
     } catch (e, st) {
       AppLogger.I.error(_module, 'generate_story_gemini_failed', error: e, stackTrace: st, metrics: {
         'event_id': event.id,
-        'model': _config.geminiModel,
+        'model': primaryModel,
         'key': _config.maskedApiKey,
         'duration_ms': sw.elapsedMilliseconds,
       });
@@ -130,7 +132,126 @@ class AiService {
     }
   }
 
-  /// Ověří spojení s Gemini API krátkým dotazem.
+  /// Volá Gemini API s exponenciálním zpožděním (retry) při 503 a 429,
+  /// a v případě trvalého 503 zkouší záložní fallback modely.
+  Future<(String text, String usedModel, GenerateContentResponse? response)> _generateWithRetry({
+    required String prompt,
+    required String initialModel,
+    required String apiKey,
+  }) async {
+    const int maxRetries = 3;
+    final candidateModels = [
+      initialModel,
+      ...fallbackModels.where((m) => m != initialModel),
+    ];
+
+    Object? lastError;
+    StackTrace? lastStackTrace;
+
+    for (int mIdx = 0; mIdx < candidateModels.length; mIdx++) {
+      final currentModelName = candidateModels[mIdx];
+      final isFallback = mIdx > 0;
+
+      if (isFallback) {
+        AppLogger.I.warn(_module, 'gemini_fallback_attempt', metrics: {
+          'previous_model': candidateModels[mIdx - 1],
+          'new_model': currentModelName,
+          'reason': 'Primary model failed with 503 / overload',
+        });
+      }
+
+      int delaySeconds = 2;
+
+      for (int attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          final model = GenerativeModel(
+            model: currentModelName,
+            apiKey: apiKey,
+            generationConfig: GenerationConfig(temperature: 0.8, maxOutputTokens: 1024),
+            systemInstruction: Content.system(
+              'Jsi laskavý rodinný kronikář. Píšeš česky, vřele a s humorem, '
+              'krátké příběhy pro rodinnou kroniku. Nevymýšlej si fakta, která nejsou v podkladech, '
+              'drž se 1–3 odstavců a nepoužívej Markdown nadpisy.',
+            ),
+          );
+
+          final response = await model.generateContent([Content.text(prompt)]).timeout(timeout);
+          final text = response.text?.trim() ?? '';
+          if (text.isEmpty) {
+            throw StateError('Gemini vrátil prázdnou odpověď (finishReason: '
+                '${response.candidates.isEmpty ? 'none' : response.candidates.first.finishReason?.name})');
+          }
+
+          if (isFallback) {
+            AppLogger.I.info(_module, 'gemini_fallback_success', metrics: {
+              'fallback_model': currentModelName,
+              'attempt': attempt,
+            });
+          }
+
+          return (text, currentModelName, response);
+        } catch (e, st) {
+          lastError = e;
+          lastStackTrace = st;
+
+          final isTransient = _isTransientError(e);
+          final isServerBusy = _is503Error(e);
+
+          if (isTransient && attempt < maxRetries) {
+            AppLogger.I.warn(_module, 'gemini_transient_error_retry', metrics: {
+              'model': currentModelName,
+              'attempt': attempt,
+              'retry_in_sec': delaySeconds,
+              'error': e.toString(),
+            });
+            await Future<void>.delayed(Duration(seconds: delaySeconds));
+            delaySeconds *= 2; // Exponenciální prodleva (2s, 4s, 8s)
+            continue;
+          }
+
+          // Pokud model selhal po všech retries a jde o chybu 503, zkusíme další fallback model
+          if (isServerBusy && mIdx < candidateModels.length - 1) {
+            AppLogger.I.warn(_module, 'gemini_retries_exhausted_switching_model', metrics: {
+              'failed_model': currentModelName,
+              'attempts': attempt,
+              'error': e.toString(),
+            });
+            break; // Přechod na další model v cyklu candidateModels
+          }
+
+          // Pokud to není 503 ani přetížení (např. špatný klíč 400/403), nebo došly všechny modely, vyhodíme výjimku
+          rethrow;
+        }
+      }
+    }
+
+    if (lastError != null) {
+      Error.throwWithLastError(lastError, lastStackTrace ?? StackTrace.current);
+    }
+    throw StateError('Nepodařilo se vygenerovat příběh.');
+  }
+
+  /// Detekuje, zda se jedná o dočasnou chybu vhodnou pro retry (503 nebo 429).
+  static bool _isTransientError(Object e) {
+    final str = e.toString().toLowerCase();
+    return str.contains('503') ||
+        str.contains('429') ||
+        str.contains('high demand') ||
+        str.contains('resource_exhausted') ||
+        str.contains('unavailable') ||
+        str.contains('overloaded');
+  }
+
+  /// Detekuje specificky chybu přetížení serveru 503.
+  static bool _is503Error(Object e) {
+    final str = e.toString().toLowerCase();
+    return str.contains('503') ||
+        str.contains('unavailable') ||
+        str.contains('high demand') ||
+        str.contains('overloaded');
+  }
+
+  /// Ověří spojení s Gemini API krátkým dotazem (s retry a případným fallbackem).
   Future<String> testConnection({String? modelOverride, String? apiKeyOverride}) async {
     final sw = Stopwatch()..start();
     final key = apiKeyOverride ?? _config.geminiApiKey;
@@ -140,16 +261,21 @@ class AiService {
       AppLogger.I.warn(_module, 'test_connection_no_key');
       return 'Není zadán Gemini API klíč – AI běží v offline režimu.';
     }
+
     try {
-      final model = GenerativeModel(model: modelName, apiKey: key);
-      final response = await model
-          .generateContent([Content.text('Odpověz jedním slovem česky: funguješ?')]).timeout(timeout);
-      final text = response.text?.trim() ?? '';
+      final (text, usedModel, _) = await _generateWithRetry(
+        prompt: 'Odpověz jedním slovem česky: funguješ?',
+        initialModel: modelName,
+        apiKey: key,
+      );
+
+      final extraInfo = usedModel != modelName ? ' (fallback z $modelName)' : '';
       AppLogger.I.info(_module, 'test_connection_ok', metrics: {
-        'model': modelName,
+        'model': usedModel,
+        'requested_model': modelName,
         'duration_ms': sw.elapsedMilliseconds,
       });
-      return 'Spojení OK ($modelName, ${sw.elapsedMilliseconds} ms): $text';
+      return 'Spojení OK ($usedModel$extraInfo, ${sw.elapsedMilliseconds} ms): $text';
     } catch (e, st) {
       AppLogger.I.error(_module, 'test_connection_failed', error: e, stackTrace: st, metrics: {
         'model': modelName,
@@ -294,6 +420,7 @@ class AiService {
     if (msg.contains('API key') || msg.contains('API_KEY')) return 'Neplatný API klíč.';
     if (msg.contains('SocketException') || msg.contains('Failed host lookup')) return 'Bez připojení k internetu.';
     if (msg.contains('quota') || msg.contains('429')) return 'Vyčerpaná kvóta Gemini API.';
+    if (msg.contains('503') || msg.contains('high demand')) return 'Servery Gemini jsou momentálně přetížené (503).';
     return msg.length > 160 ? '${msg.substring(0, 160)}…' : msg;
   }
 }
