@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:google_generative_ai/google_generative_ai.dart';
 
@@ -37,11 +38,11 @@ class AiStoryResult {
 /// AI průvodce – generuje rodinné příběhy z událostí kroniky.
 ///
 /// Vybaveno robustní logikou pro vysokou dostupnost:
-/// - Při chybách 503 (High demand / Unavailable) nebo 429 (Rate limit)
-///   automaticky opakuje volání až 3x s exponenciálním zpožděním (2s, 4s, 8s).
-/// - Pokud i po 3 pokusech primární model selže na 503, automaticky aktivuje
-///   záložní model (fallback: `gemini-3.8-flash-lite`, případně `gemini-3.8-pro`).
-/// - Všechny pokusy a přepnutí fallbacku jsou zaznamenávány do [AppLogger].
+/// - Při chybách 503 (Server Overload), 429 (Rate limit), TimeoutException
+///   či SocketException automaticky reaguje a podle typu chyby provádí retry či okamžitý fallback.
+/// - Pokud primární model vyprší na timeout nebo vrátí 503, okamžitě aktivuje záložní model
+///   (`gemini-3.8-flash-lite`, `gemini-2.5-flash-lite` / `gemini-3.8-pro`).
+/// - Test spojení v Nastavení má zkrácený timeout (12s) a okamžitý fallback pro rychlou odezvu.
 class AiService {
   AiService({AppConfig? config, this.timeout = const Duration(seconds: 45)})
       : _config = config ?? AppConfig.instance;
@@ -51,9 +52,10 @@ class AiService {
 
   static const String _module = LogModule.ai;
 
-  /// Seznam záložních modelů pro případ přetížení (503).
+  /// Seznam záložních modelů pro případ přetížení či timeoutu.
   static const List<String> fallbackModels = [
     'gemini-3.8-flash-lite',
+    'gemini-2.5-flash-lite',
     'gemini-3.8-pro',
     'gemini-2.5-flash',
   ];
@@ -85,13 +87,14 @@ class AiService {
       return result;
     }
 
-    // Pokusíme se zavolat primární model s retry logikou
+    // Pokusíme se zavolat primární model s retry a fallback logikou
     final primaryModel = _config.geminiModel;
     try {
       final (text, usedModel, response) = await _generateWithRetry(
         prompt: prompt,
         initialModel: primaryModel,
         apiKey: _config.geminiApiKey,
+        callTimeout: timeout,
       );
 
       final result = AiStoryResult(
@@ -133,14 +136,16 @@ class AiService {
     }
   }
 
-  /// Volá Gemini API s exponenciálním zpožděním (retry) při 503 a 429,
-  /// a v případě trvalého 503 zkouší záložní fallback modely.
+  /// Volá Gemini API s retry logikou pro dočasné chyby (429/503)
+  /// a okamžitým přepnutím na záložní model (fallback) při TimeoutException nebo trvalém 503.
   Future<(String text, String usedModel, GenerateContentResponse? response)> _generateWithRetry({
     required String prompt,
     required String initialModel,
     required String apiKey,
+    Duration? callTimeout,
+    int maxRetries = 3,
   }) async {
-    const int maxRetries = 3;
+    final effectiveTimeout = callTimeout ?? timeout;
     final candidateModels = [
       initialModel,
       ...fallbackModels.where((m) => m != initialModel),
@@ -157,7 +162,9 @@ class AiService {
         AppLogger.I.warn(_module, 'gemini_fallback_attempt', metrics: {
           'previous_model': candidateModels[mIdx - 1],
           'new_model': currentModelName,
-          'reason': 'Primary model failed with 503 / overload',
+          'reason': lastError is TimeoutException
+              ? 'Model timed out after ${effectiveTimeout.inSeconds}s'
+              : 'Model failed with 503 / overload: $lastError',
         });
       }
 
@@ -176,7 +183,7 @@ class AiService {
             ),
           );
 
-          final response = await model.generateContent([Content.text(prompt)]).timeout(timeout);
+          final response = await model.generateContent([Content.text(prompt)]).timeout(effectiveTimeout);
           final text = response.text?.trim() ?? '';
           if (text.isEmpty) {
             throw StateError('Gemini vrátil prázdnou odpověď (finishReason: '
@@ -186,6 +193,7 @@ class AiService {
           if (isFallback) {
             AppLogger.I.info(_module, 'gemini_fallback_success', metrics: {
               'fallback_model': currentModelName,
+              'original_model': initialModel,
               'attempt': attempt,
             });
           }
@@ -195,10 +203,27 @@ class AiService {
           lastError = e;
           lastStackTrace = st;
 
-          final isTransient = _isTransientError(e);
+          final isTimeout = e is TimeoutException;
           final isServerBusy = _is503Error(e);
+          final isTransient = _isTransientError(e);
 
-          if (isTransient && attempt < maxRetries) {
+          // 1. TimeoutException: Pokud hlavní model vypršel na timeout, nebudeme čekat dalších 45s,
+          // ale pokud máme k dispozici záložní model, ihned přepneme na rychlejší fallback model.
+          if (isTimeout) {
+            AppLogger.I.warn(_module, 'gemini_timeout_detected', metrics: {
+              'model': currentModelName,
+              'timeout_seconds': effectiveTimeout.inSeconds,
+              'has_fallback': mIdx < candidateModels.length - 1,
+            });
+
+            if (mIdx < candidateModels.length - 1) {
+              // Okamžitý přechod na další model v pořadí
+              break;
+            }
+          }
+
+          // 2. Běžné dočasné chyby (429 rate limit nebo 503) zkusíme retry s exponenciálním zpožděním
+          if (isTransient && attempt < maxRetries && !isTimeout) {
             AppLogger.I.warn(_module, 'gemini_transient_error_retry', metrics: {
               'model': currentModelName,
               'attempt': attempt,
@@ -210,7 +235,7 @@ class AiService {
             continue;
           }
 
-          // Pokud model selhal po všech retries a jde o chybu 503, zkusíme další fallback model
+          // 3. Pokud model selhal po všech pokusech na 503 a máme další model, přepneme na fallback
           if (isServerBusy && mIdx < candidateModels.length - 1) {
             AppLogger.I.warn(_module, 'gemini_retries_exhausted_switching_model', metrics: {
               'failed_model': currentModelName,
@@ -220,7 +245,8 @@ class AiService {
             break; // Přechod na další model v cyklu candidateModels
           }
 
-          // Pokud to není 503 ani přetížení (např. špatný klíč 400/403), nebo došly všechny modely, vyhodíme výjimku
+          // Pokud to není timeout, 503 ani přetížení (např. neplatný API klíč 400/403),
+          // nebo došly všechny modely, vyhodíme výjimku ihned
           rethrow;
         }
       }
@@ -235,19 +261,25 @@ class AiService {
     throw StateError('Nepodařilo se vygenerovat příběh.');
   }
 
-  /// Detekuje, zda se jedná o dočasnou chybu vhodnou pro retry (503 nebo 429).
+  /// Detekuje, zda se jedná o dočasnou chybu vhodnou pro retry či fallback
+  /// (503, 429, TimeoutException, SocketException).
   static bool _isTransientError(Object e) {
+    if (e is TimeoutException || e is SocketException) return true;
     final str = e.toString().toLowerCase();
     return str.contains('503') ||
         str.contains('429') ||
         str.contains('high demand') ||
         str.contains('resource_exhausted') ||
         str.contains('unavailable') ||
-        str.contains('overloaded');
+        str.contains('overloaded') ||
+        str.contains('timeoutexception') ||
+        str.contains('socketexception') ||
+        str.contains('failed host lookup');
   }
 
-  /// Detekuje specificky chybu přetížení serveru 503.
+  /// Detekuje specificky chybu přetížení serveru 503 nebo timeoutu.
   static bool _is503Error(Object e) {
+    if (e is TimeoutException) return true;
     final str = e.toString().toLowerCase();
     return str.contains('503') ||
         str.contains('unavailable') ||
@@ -255,8 +287,16 @@ class AiService {
         str.contains('overloaded');
   }
 
-  /// Ověří spojení s Gemini API krátkým dotazem (s retry a případným fallbackem).
-  Future<String> testConnection({String? modelOverride, String? apiKeyOverride}) async {
+  /// Ověří spojení s Gemini API krátkým dotazem.
+  ///
+  /// Výchozí timeout pro test je zkrácen na 12 sekund, aby uživatel nečekal zbytečně dlouho.
+  /// Pokud hlavní model vyprší nebo hlásí 503, automaticky otestuje záložní model
+  /// a v textu výsledku to srozumitelně uvede.
+  Future<String> testConnection({
+    String? modelOverride,
+    String? apiKeyOverride,
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
     final sw = Stopwatch()..start();
     final key = apiKeyOverride ?? _config.geminiApiKey;
     final modelName = modelOverride ?? _config.geminiModel;
@@ -271,15 +311,24 @@ class AiService {
         prompt: 'Odpověz jedním slovem česky: funguješ?',
         initialModel: modelName,
         apiKey: key,
+        callTimeout: timeout,
+        maxRetries: 2, // U testu spojení stačí max 2 pokusy pro rychlou odezvu
       );
 
-      final extraInfo = usedModel != modelName ? ' (fallback z $modelName)' : '';
+      final isFallback = usedModel != modelName;
       AppLogger.I.info(_module, 'test_connection_ok', metrics: {
         'model': usedModel,
         'requested_model': modelName,
+        'is_fallback': isFallback,
         'duration_ms': sw.elapsedMilliseconds,
       });
-      return 'Spojení OK ($usedModel$extraInfo, ${sw.elapsedMilliseconds} ms): $text';
+
+      if (isFallback) {
+        return 'Spojení aktivní přes záložní model $usedModel (${sw.elapsedMilliseconds} ms): $text\n'
+            '(Hlavní model $modelName je aktuálně pomalý nebo přetížený)';
+      }
+
+      return 'Spojení OK ($usedModel, ${sw.elapsedMilliseconds} ms): $text';
     } catch (e, st) {
       AppLogger.I.error(_module, 'test_connection_failed', error: e, stackTrace: st, metrics: {
         'model': modelName,
@@ -420,7 +469,7 @@ class AiService {
 
   static String _humanError(Object e) {
     final msg = e.toString();
-    if (e is TimeoutException) return 'Vypršel časový limit odpovědi.';
+    if (e is TimeoutException) return 'Vypršel časový limit odpovědi (timeout).';
     if (msg.contains('API key') || msg.contains('API_KEY')) return 'Neplatný API klíč.';
     if (msg.contains('SocketException') || msg.contains('Failed host lookup')) return 'Bez připojení k internetu.';
     if (msg.contains('quota') || msg.contains('429')) return 'Vyčerpaná kvóta Gemini API.';
