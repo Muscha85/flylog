@@ -65,10 +65,12 @@ class BackupService {
       } catch (_) {}
 
       // Vyvoláme systémový dialog pro sdílení / uložení souboru
-      await Share.shareXFiles(
-        [XFile(tempFile.path, mimeType: 'application/json')],
-        subject: 'Záloha FlyLog ($fileName)',
-        text: 'Záloha rodinné kroniky FlyLog (${events.length} událostí)',
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(tempFile.path, mimeType: 'application/json')],
+          title: 'Záloha FlyLog ($fileName)',
+          text: 'Záloha rodinné kroniky FlyLog (${events.length} událostí)',
+        ),
       );
 
       AppLogger.I.info(_module, 'backup_exported', metrics: {
@@ -89,7 +91,7 @@ class BackupService {
     final repo = repository ?? ServiceLocator.chronicle;
     final sw = Stopwatch()..start();
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['json'],
       );
