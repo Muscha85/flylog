@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../../core/di/service_locator.dart';
-import '../../../core/utils/formatters.dart';
 import '../../../core/utils/id_generator.dart';
 import '../../chronicle/models/event_item.dart';
 import '../../chronicle/models/moment_item.dart';

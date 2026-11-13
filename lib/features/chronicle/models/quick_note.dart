@@ -10,6 +10,9 @@ class QuickNote {
   final DateTime timestamp;
   final String text;
 
+  String get timeLabel =>
+      '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}';
+
   QuickNote copyWith({
     String? id,
     DateTime? timestamp,
@@ -36,3 +39,4 @@ class QuickNote {
     );
   }
 }
+
