@@ -248,6 +248,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       subtitle: const Text('Vyžaduje vytvořený Firebase projekt a google-services.json'),
                       onChanged: null, // Zatím neaktivní
                     ),
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text('Záloha a obnova dat (JSON)', style: theme.textTheme.titleSmall),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Bezpečný export všech zápisů kroniky do JSON souboru pro zálohu v telefonu nebo na Google Disku.',
+                            style: theme.textTheme.bodySmall?.copyWith(color: scheme.outline),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(Icons.file_upload_outlined),
+                                  label: const Text('Exportovat zálohu'),
+                                  onPressed: _exportBackup,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: FilledButton.tonalIcon(
+                                  icon: const Icon(Icons.file_download_outlined),
+                                  label: const Text('Obnovit ze zálohy'),
+                                  onPressed: _importBackup,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -304,6 +339,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _isTestingApi = false;
         _apiTestResult = res;
       });
+    }
+  }
+
+  Future<void> _exportBackup() async {
+    try {
+      final path = await ServiceLocator.backup.exportBackup();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Záloha uložena a připravena ke sdílení:\n$path')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Chyba při exportu: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _importBackup() async {
+    try {
+      final res = await ServiceLocator.backup.importBackup();
+      if (mounted) {
+        if (res.success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Úspěšně obnoveno ${res.importedCount} událostí!')),
+          );
+        } else if (res.message != 'Výběr souboru byl zrušen.') {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(res.message)),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Chyba při obnově dat: $e')),
+        );
+      }
     }
   }
 }

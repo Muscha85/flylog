@@ -1,6 +1,8 @@
 import '../../features/ai_companion/services/ai_service.dart';
+import '../../features/chronicle/services/backup_service.dart';
 import '../../features/chronicle/services/chronicle_repository.dart';
 import '../../features/chronicle/services/mock_chronicle_repository.dart';
+import '../../features/chronicle/services/weather_service.dart';
 import '../../features/media_vault/services/media_service.dart';
 import '../../features/web_publisher/services/static_html_builder.dart';
 import '../config/app_config.dart';
@@ -17,11 +19,15 @@ abstract final class ServiceLocator {
   static MediaService? _media;
   static AiService? _ai;
   static StaticHtmlBuilder? _html;
+  static WeatherService? _weather;
+  static BackupService? _backup;
 
   static ChronicleRepository get chronicle => _chronicle ?? (throw StateError('ServiceLocator.init() nebyl zavolán'));
   static MediaService get media => _media ??= MediaService();
   static AiService get ai => _ai ??= AiService();
   static StaticHtmlBuilder get html => _html ??= const StaticHtmlBuilder();
+  static WeatherService get weather => _weather ??= const WeatherService();
+  static BackupService get backup => _backup ??= const BackupService();
 
   static Future<void> init({ChronicleRepository? chronicleOverride}) async {
     final sw = Stopwatch()..start();

@@ -11,10 +11,10 @@ import '../../chronicle/models/event_item.dart';
 /// Formulář pro vytvoření nové události nebo editaci existující.
 ///
 /// Podporuje:
-/// - Zpětný zápis do minulosti (výběr libovolného data)
-/// - Vícedenní rozsah (od - do) pro dovolené
-/// - Automatické předgenerování EventDay struktur pro vícedenní akce
-/// - Nastavení kategorie, místa, souřadnic, počasí, účastníků a popisu
+/// - Stav Draft / Published
+/// - Automatické načtení počasí z Open-Meteo podle GPS a data
+/// - Parametry délky trasy (km), doby trvání (min) a doplňujících tipů
+/// - Zpětný zápis i vícedenní rozsah
 class EventFormScreen extends StatefulWidget {
   const EventFormScreen({super.key, this.existingEvent});
 
@@ -31,15 +31,33 @@ class _EventFormScreenState extends State<EventFormScreen> {
   late TextEditingController _locationController;
   late TextEditingController _descriptionController;
   late TextEditingController _weatherController;
-  late TextEditingController _participantsController;
+  late TextEditingController _tempController;
+  late TextEditingController _windController;
+  late TextEditingController _distanceController;
+  late TextEditingController _durationController;
+  late TextEditingController _extraNotesController;
   late TextEditingController _latController;
   late TextEditingController _lngController;
 
   late EventCategory _category;
+  late EventStatus _status;
   late DateTime _startDate;
   DateTime? _endDate;
   bool _isMultiDay = false;
   bool _isSaving = false;
+  bool _isLoadingWeather = false;
+
+  final List<String> _selectedParticipants = [];
+
+  static const List<String> _suggestedParticipants = [
+    'Rodina',
+    'Jiří',
+    'Martinka',
+    'Davídek',
+    'Natálka',
+    'Babička',
+    'Dědeček',
+  ];
 
   bool get _isEditing => widget.existingEvent != null;
 
@@ -51,14 +69,25 @@ class _EventFormScreenState extends State<EventFormScreen> {
     _locationController = TextEditingController(text: e?.location ?? '');
     _descriptionController = TextEditingController(text: e?.description ?? '');
     _weatherController = TextEditingController(text: e?.weather ?? '');
-    _participantsController = TextEditingController(text: e?.participants.join(', ') ?? 'Táta, Máma, Ema, Vojta');
+    _tempController = TextEditingController(text: e?.weatherTempC?.toString() ?? '');
+    _windController = TextEditingController(text: e?.weatherWindMs?.toString() ?? '');
+    _distanceController = TextEditingController(text: e?.distanceKm?.toString() ?? '');
+    _durationController = TextEditingController(text: e?.durationMinutes?.toString() ?? '');
+    _extraNotesController = TextEditingController(text: e?.extraNotes ?? '');
     _latController = TextEditingController(text: e?.latitude?.toString() ?? '');
     _lngController = TextEditingController(text: e?.longitude?.toString() ?? '');
 
     _category = e?.category ?? EventCategory.trip;
+    _status = e?.status ?? EventStatus.draft; // Nový záznam začíná vždy jako draft
     _startDate = e?.startDate ?? DateTime.now();
     _endDate = e?.endDate;
     _isMultiDay = e?.isMultiDay ?? false;
+
+    if (e != null) {
+      _selectedParticipants.addAll(e.participants);
+    } else {
+      _selectedParticipants.addAll(['Rodina', 'Jiří', 'Martinka', 'Davídek', 'Natálka']);
+    }
   }
 
   @override
@@ -67,7 +96,11 @@ class _EventFormScreenState extends State<EventFormScreen> {
     _locationController.dispose();
     _descriptionController.dispose();
     _weatherController.dispose();
-    _participantsController.dispose();
+    _tempController.dispose();
+    _windController.dispose();
+    _distanceController.dispose();
+    _durationController.dispose();
+    _extraNotesController.dispose();
     _latController.dispose();
     _lngController.dispose();
     super.dispose();
@@ -80,7 +113,7 @@ class _EventFormScreenState extends State<EventFormScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isEditing ? 'Upravit událost' : 'Nový rodinný zážitek'),
+        title: Text(_isEditing ? 'Upravit událost' : 'Nový záznam'),
         actions: [
           if (_isSaving)
             const Center(
@@ -102,8 +135,53 @@ class _EventFormScreenState extends State<EventFormScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            // Stav záznamu (Draft vs Published)
+            Card(
+              elevation: 0,
+              color: _status == EventStatus.draft ? Colors.orange.shade50 : Colors.green.shade50,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: _status == EventStatus.draft ? Colors.orange.shade300 : Colors.green.shade300,
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: Row(
+                  children: [
+                    Icon(
+                      _status.icon,
+                      color: _status == EventStatus.draft ? Colors.orange.shade800 : Colors.green.shade800,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _status == EventStatus.draft
+                            ? 'Stav: Rozpracováno (Draft)'
+                            : 'Stav: Dokončeno (Publikováno)',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: _status == EventStatus.draft ? Colors.orange.shade900 : Colors.green.shade900,
+                        ),
+                      ),
+                    ),
+                    Switch(
+                      value: _status == EventStatus.published,
+                      activeColor: Colors.green.shade700,
+                      onChanged: (val) {
+                        setState(() {
+                          _status = val ? EventStatus.published : EventStatus.draft;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
             // Kategorie
-            Text('Kategorie zážitku', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+            Text('Kategorie záznamu', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
@@ -134,8 +212,8 @@ class _EventFormScreenState extends State<EventFormScreen> {
             TextFormField(
               controller: _titleController,
               decoration: const InputDecoration(
-                labelText: 'Název události *',
-                hintText: 'např. Výlet na Paprsek',
+                labelText: 'Název události / dne *',
+                hintText: 'např. Výlet na Paprsek nebo Sobotní pohoda',
                 prefixIcon: Icon(Icons.title),
                 border: OutlineInputBorder(),
               ),
@@ -148,7 +226,7 @@ class _EventFormScreenState extends State<EventFormScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Datum a čas
+            // Termín
             Card(
               elevation: 0,
               color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
@@ -164,7 +242,7 @@ class _EventFormScreenState extends State<EventFormScreen> {
                         Text('Termín konání', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
                         Row(
                           children: [
-                            const Text('Vícedenní akce'),
+                            const Text('Vícedenní'),
                             Switch(
                               value: _isMultiDay,
                               onChanged: (val) {
@@ -182,7 +260,7 @@ class _EventFormScreenState extends State<EventFormScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.calendar_today),
@@ -206,7 +284,7 @@ class _EventFormScreenState extends State<EventFormScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Místo a GPS
+            // Místo a GPS souřadnice
             TextFormField(
               controller: _locationController,
               decoration: const InputDecoration(
@@ -216,7 +294,7 @@ class _EventFormScreenState extends State<EventFormScreen> {
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             Row(
               children: [
                 Expanded(
@@ -231,7 +309,7 @@ class _EventFormScreenState extends State<EventFormScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
                 Expanded(
                   child: TextFormField(
                     controller: _lngController,
@@ -248,25 +326,129 @@ class _EventFormScreenState extends State<EventFormScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Počasí a účastníci
-            TextFormField(
-              controller: _weatherController,
-              decoration: const InputDecoration(
-                labelText: 'Počasí',
-                hintText: '☀️ 22 °C, polojasno',
-                prefixIcon: Icon(Icons.wb_sunny_outlined),
-                border: OutlineInputBorder(),
+            // Počasí (Open-Meteo & editace)
+            Card(
+              elevation: 0,
+              color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Počasí', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                        FilledButton.tonalIcon(
+                          icon: _isLoadingWeather
+                              ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.cloud_sync_outlined, size: 16),
+                          label: const Text('Načíst z Open-Meteo'),
+                          onPressed: _isLoadingWeather ? null : _fetchWeatherFromOpenMeteo,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    TextFormField(
+                      controller: _weatherController,
+                      decoration: const InputDecoration(
+                        labelText: 'Souhrnný popis počasí',
+                        hintText: '☀️ 22 °C, polojasno, slabý vítr',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _tempController,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            decoration: const InputDecoration(
+                              labelText: 'Teplota (°C)',
+                              hintText: '22.5',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _windController,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            decoration: const InputDecoration(
+                              labelText: 'Vítr (m/s)',
+                              hintText: '3.2',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 16),
-            TextFormField(
-              controller: _participantsController,
-              decoration: const InputDecoration(
-                labelText: 'Účastníci (oddělené čárkou)',
-                hintText: 'Táta, Máma, Ema, Vojta',
-                prefixIcon: Icon(Icons.people_outline),
-                border: OutlineInputBorder(),
-              ),
+
+            // Délka trasy a trvání
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _distanceController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Trasa (km)',
+                      hintText: '8.5',
+                      prefixIcon: Icon(Icons.straighten),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    controller: _durationController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Doba trvání (min)',
+                      hintText: '180',
+                      prefixIcon: Icon(Icons.timer_outlined),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Účastníci (štítky)
+            Text('Účastníci', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final p in _suggestedParticipants)
+                  FilterChip(
+                    label: Text(p),
+                    selected: _selectedParticipants.contains(p),
+                    onSelected: (val) {
+                      setState(() {
+                        if (val) {
+                          _selectedParticipants.add(p);
+                        } else {
+                          _selectedParticipants.remove(p);
+                        }
+                      });
+                    },
+                  ),
+              ],
             ),
             const SizedBox(height: 16),
 
@@ -275,9 +457,22 @@ class _EventFormScreenState extends State<EventFormScreen> {
               controller: _descriptionController,
               maxLines: 4,
               decoration: const InputDecoration(
-                labelText: 'Poznámky, průběh, zážitky',
-                hintText: 'Jaký byl výlet, co jsme zažili, co chutnalo...',
+                labelText: 'Základní popis / průběh akce',
+                hintText: 'Co bylo cílem, hlavní program a zážitky...',
                 prefixIcon: Icon(Icons.notes_outlined),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Doplňující poznámky a praktické tipy
+            TextFormField(
+              controller: _extraNotesController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Praktické tipy / doporučení',
+                hintText: 'Parkování, vstupné, kde se dobře najíst, kočárky...',
+                prefixIcon: Icon(Icons.lightbulb_outline),
                 border: OutlineInputBorder(),
               ),
             ),
@@ -286,7 +481,7 @@ class _EventFormScreenState extends State<EventFormScreen> {
             FilledButton.icon(
               onPressed: _isSaving ? null : _save,
               icon: const Icon(Icons.save_outlined),
-              label: Text(_isEditing ? 'Uložit změny' : 'Zapsat do kroniky'),
+              label: Text(_isEditing ? 'Uložit změny' : 'Založit do kroniky'),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
@@ -295,6 +490,43 @@ class _EventFormScreenState extends State<EventFormScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _fetchWeatherFromOpenMeteo() async {
+    final lat = double.tryParse(_latController.text.trim());
+    final lng = double.tryParse(_lngController.text.trim());
+
+    if (lat == null || lng == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nejprve zadejte nebo načtěte GPS souřadnice (lat a lng).')),
+      );
+      return;
+    }
+
+    setState(() => _isLoadingWeather = true);
+    final weather = await ServiceLocator.weather.fetchWeather(
+      latitude: lat,
+      longitude: lng,
+      date: _startDate,
+    );
+
+    if (mounted) {
+      setState(() {
+        _isLoadingWeather = false;
+        if (weather != null) {
+          _weatherController.text = weather.toSummaryString();
+          _tempController.text = weather.temperatureC.toStringAsFixed(1);
+          _windController.text = weather.windSpeedMs.toStringAsFixed(1);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Počasí z Open-Meteo bylo úspěšně načteno!')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Počasí se nepodařilo z Open-Meteo načíst.')),
+          );
+        }
+      });
+    }
   }
 
   Future<void> _pickDate({required bool isStart}) async {
@@ -327,19 +559,16 @@ class _EventFormScreenState extends State<EventFormScreen> {
 
     try {
       final now = DateTime.now();
-      final participants = _participantsController.text
-          .split(',')
-          .map((s) => s.trim())
-          .where((s) => s.isNotEmpty)
-          .toList();
-
       final lat = double.tryParse(_latController.text.trim());
       final lng = double.tryParse(_lngController.text.trim());
+      final temp = double.tryParse(_tempController.text.trim());
+      final wind = double.tryParse(_windController.text.trim());
+      final dist = double.tryParse(_distanceController.text.trim());
+      final dur = int.tryParse(_durationController.text.trim());
 
       final effectiveEndDate = _isMultiDay ? (_endDate ?? _startDate.add(const Duration(days: 1))) : null;
 
       List<EventDay> days = widget.existingEvent?.days ?? [];
-      // Pokud je vícedenní a nemá ještě dny, vygenerujeme prázdné struktury dnů
       if (_isMultiDay && effectiveEndDate != null && days.isEmpty) {
         final totalDays = Fmt.daysInclusive(_startDate, effectiveEndDate);
         days = [
@@ -359,15 +588,23 @@ class _EventFormScreenState extends State<EventFormScreen> {
         category: _category,
         startDate: _startDate,
         endDate: effectiveEndDate,
+        status: _status,
         location: _locationController.text.trim(),
         latitude: lat,
         longitude: lng,
         description: _descriptionController.text.trim(),
         weather: _weatherController.text.trim().isEmpty ? null : _weatherController.text.trim(),
-        participants: participants,
+        weatherTempC: temp,
+        weatherWindMs: wind,
+        distanceKm: dist,
+        durationMinutes: dur,
+        extraNotes: _extraNotesController.text.trim(),
+        locationGuideText: widget.existingEvent?.locationGuideText,
         aiStory: widget.existingEvent?.aiStory,
+        participants: _selectedParticipants,
         moments: widget.existingEvent?.moments ?? [],
         days: days,
+        quickNotes: widget.existingEvent?.quickNotes ?? [],
         createdAt: widget.existingEvent?.createdAt ?? now,
         updatedAt: now,
       );
@@ -376,7 +613,7 @@ class _EventFormScreenState extends State<EventFormScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_isEditing ? 'Událost upravena' : 'Událost zapsána do kroniky')),
+          SnackBar(content: Text(_isEditing ? 'Událost upravena' : 'Záznam založen')),
         );
         Navigator.of(context).pop();
       }
@@ -392,4 +629,3 @@ class _EventFormScreenState extends State<EventFormScreen> {
     }
   }
 }
-

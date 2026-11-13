@@ -18,3 +18,4 @@ void main() {
     expect(result.contains('Chyba'), isFalse);
   }, timeout: const Timeout(Duration(seconds: 30)));
 }
+

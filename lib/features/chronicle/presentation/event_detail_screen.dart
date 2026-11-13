@@ -9,11 +9,15 @@ import '../../../core/utils/id_generator.dart';
 import '../../chronicle/models/event_day.dart';
 import '../../chronicle/models/event_item.dart';
 import '../../chronicle/models/moment_item.dart';
+import '../../chronicle/models/quick_note.dart';
 import 'event_form_screen.dart';
 
 /// Detail události rodinné kroniky.
 ///
-/// * Zobrazuje hlavičku, metadata, AI příběh s možností přegenerování,
+/// * Zobrazuje hlavičku, metadata, stav (Draft / Published),
+/// * Fáze A AI: Průvodce lokalitou a zajímavostmi,
+/// * Průběžné časové poznámky pro rozpracovaný den / výlet,
+/// * Fáze B AI: Finální rodinný příběh s možností přímé editace,
 /// * Správu jednotlivých dnů u vícedenních akcí (Dovolená),
 /// * Fotogalerii s možností hromadného nahrání / vyfocení momentek,
 /// * Tlačítko pro export do samostatného HTML pro `vylety.muchovi.com`.
@@ -37,6 +41,7 @@ class EventDetailScreen extends StatefulWidget {
 class _EventDetailScreenState extends State<EventDetailScreen> with SingleTickerProviderStateMixin {
   TabController? _tabController;
   bool _isGeneratingAi = false;
+  bool _isLoadingGuide = false;
 
   @override
   void dispose() {
@@ -162,9 +167,26 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
             ),
             PopupMenuButton<String>(
               onSelected: (val) {
-                if (val == 'delete') _confirmDelete(context, event);
+                if (val == 'delete') {
+                  _confirmDelete(context, event);
+                } else if (val == 'toggle_status') {
+                  _toggleStatus(context, event);
+                }
               },
               itemBuilder: (ctx) => [
+                PopupMenuItem(
+                  value: 'toggle_status',
+                  child: Row(
+                    children: [
+                      Icon(
+                        event.isDraft ? Icons.check_circle_outline : Icons.edit_note,
+                        color: event.isDraft ? Colors.green : Colors.orange,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(event.isDraft ? 'Označit jako Publikováno' : 'Vrátit do Rozpracováno (Draft)'),
+                    ],
+                  ),
+                ),
                 const PopupMenuItem(
                   value: 'delete',
                   child: Row(
@@ -185,7 +207,13 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                _buildStatusBanner(context, event),
+                const SizedBox(height: 16),
                 _buildMetadataCard(context, event),
+                const SizedBox(height: 16),
+                _buildQuickNotesSection(context, event),
+                const SizedBox(height: 16),
+                _buildLocationGuideCard(context, event),
                 const SizedBox(height: 16),
                 _buildAiStoryCard(context, event),
                 const SizedBox(height: 16),
@@ -196,7 +224,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
                 _buildMomentsHeader(context, event),
                 const SizedBox(height: 8),
                 _buildMomentsGrid(context, event, event.moments),
-                const SizedBox(height: 80), // rezerva pro FAB
+                const SizedBox(height: 80), // rezerva pro spodní okraj
               ],
             ),
           ),
@@ -205,9 +233,87 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
     );
   }
 
+  Widget _buildStatusBanner(BuildContext context, EventItem event) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    if (event.isDraft) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.orange.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          children: [
+            const CircleAvatar(
+              radius: 16,
+              backgroundColor: Colors.orange,
+              child: Icon(Icons.edit_note, color: Colors.white, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Rozpracováno (Draft)',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.deepOrange),
+                  ),
+                  Text(
+                    'Zaznamenávejte průběžné poznámky a fotky. Až budete hotovi, dokončete zápis.',
+                    style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.green.shade700,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              icon: const Icon(Icons.check, size: 18),
+              label: const Text('Dokončit'),
+              onPressed: () => _toggleStatus(context, event),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.green.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.check_circle, color: Colors.green, size: 18),
+          const SizedBox(width: 8),
+          Text(
+            'Publikováno v rodinné kronice',
+            style: TextStyle(color: Colors.green.shade800, fontWeight: FontWeight.bold, fontSize: 13),
+          ),
+          const Spacer(),
+          TextButton(
+            onPressed: () => _toggleStatus(context, event),
+            child: const Text('Vrátit do rozpracováno', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMetadataCard(BuildContext context, EventItem event) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+
+    final weatherDisplay = _formatWeather(event);
+    final routeDisplay = _formatRoute(event);
 
     return Card(
       elevation: 0,
@@ -253,12 +359,19 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
               _buildMetaRow(
                 Icons.location_on_outlined,
                 'Místo',
-                event.location + (event.hasLocation ? ' (${event.latitude!.toStringAsFixed(4)}, ${event.longitude!.toStringAsFixed(4)})' : ''),
+                event.location +
+                    (event.hasLocation
+                        ? ' (${event.latitude!.toStringAsFixed(4)}, ${event.longitude!.toStringAsFixed(4)})'
+                        : ''),
               ),
               const SizedBox(height: 8),
             ],
-            if (event.weather != null && event.weather!.isNotEmpty) ...[
-              _buildMetaRow(Icons.wb_sunny_outlined, 'Počasí', event.weather!),
+            if (routeDisplay.isNotEmpty) ...[
+              _buildMetaRow(Icons.route_outlined, 'Trasa & Čas', routeDisplay),
+              const SizedBox(height: 8),
+            ],
+            if (weatherDisplay.isNotEmpty) ...[
+              _buildMetaRow(Icons.wb_sunny_outlined, 'Počasí', weatherDisplay),
               const SizedBox(height: 8),
             ],
             if (event.participants.isNotEmpty) ...[
@@ -266,12 +379,51 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
               const SizedBox(height: 8),
             ],
             if (event.description.isNotEmpty) ...[
-              _buildMetaRow(Icons.notes_outlined, 'Poznámka', event.description),
+              _buildMetaRow(Icons.notes_outlined, 'Popis', event.description),
+              const SizedBox(height: 8),
+            ],
+            if (event.extraNotes.isNotEmpty) ...[
+              _buildMetaRow(Icons.lightbulb_outline, 'Detaily & Tipy', event.extraNotes),
             ],
           ],
         ),
       ),
     );
+  }
+
+  String _formatWeather(EventItem event) {
+    final parts = <String>[];
+    if (event.weather != null && event.weather!.isNotEmpty) {
+      parts.add(event.weather!);
+    } else {
+      if (event.weatherDescription != null && event.weatherDescription!.isNotEmpty) {
+        parts.add(event.weatherDescription!);
+      }
+      if (event.weatherTempC != null) {
+        parts.add('${event.weatherTempC!.toStringAsFixed(1)} °C');
+      }
+      if (event.weatherWindMs != null) {
+        parts.add('vítr ${event.weatherWindMs!.toStringAsFixed(1)} m/s');
+      }
+    }
+    return parts.join(', ');
+  }
+
+  String _formatRoute(EventItem event) {
+    final parts = <String>[];
+    if (event.distanceKm != null && event.distanceKm! > 0) {
+      parts.add('${event.distanceKm!.toStringAsFixed(1)} km');
+    }
+    if (event.durationMinutes != null && event.durationMinutes! > 0) {
+      final h = event.durationMinutes! ~/ 60;
+      final m = event.durationMinutes! % 60;
+      if (h > 0) {
+        parts.add('$h h ${m > 0 ? '$m min' : ''}');
+      } else {
+        parts.add('$m min');
+      }
+    }
+    return parts.join(' · ');
   }
 
   Widget _buildMetaRow(IconData icon, String label, String value) {
@@ -285,6 +437,173 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
       ],
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Průběžné časové poznámky (Draft workflow)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildQuickNotesSection(BuildContext context, EventItem event) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final notes = event.quickNotes;
+
+    return Card(
+      elevation: 0,
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.schedule, color: scheme.primary, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Průběžné poznámky (${notes.length})',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Zapsat'),
+                  onPressed: () => _addQuickNote(context, event),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (notes.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Zatím žádné průběžné poznámky. Zapište si postřehy během dne.',
+                  style: theme.textTheme.bodySmall?.copyWith(fontStyle: FontStyle.italic),
+                ),
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: notes.length,
+                separatorBuilder: (_, __) => const Divider(height: 12),
+                itemBuilder: (context, index) {
+                  final n = notes[index];
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: scheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          n.timeLabel,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: scheme.onPrimaryContainer,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          n.text,
+                          style: theme.textTheme.bodyMedium,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 16, color: Colors.grey),
+                        tooltip: 'Smazat poznámku',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => _deleteQuickNote(context, event, n.id),
+                      ),
+                    ],
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Fáze A: AI Průvodce lokalitou
+  // ---------------------------------------------------------------------------
+
+  Widget _buildLocationGuideCard(BuildContext context, EventItem event) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Card(
+      elevation: 0,
+      color: scheme.tertiaryContainer.withValues(alpha: 0.25),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: scheme.tertiary.withValues(alpha: 0.3)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.explore_outlined, color: scheme.tertiary, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'AI Průvodce lokalitou (Fáze A)',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: scheme.tertiary,
+                  ),
+                ),
+                const Spacer(),
+                if (_isLoadingGuide)
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  IconButton(
+                    tooltip: event.hasLocationGuide ? 'Přegenerovat zajímavosti' : 'Načíst zajímavosti o místě',
+                    icon: Icon(event.hasLocationGuide ? Icons.refresh : Icons.download),
+                    onPressed: () => _generateLocationGuide(context, event),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (event.hasLocationGuide)
+              SelectableText(
+                event.locationGuideText!,
+                style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
+              )
+            else
+              Text(
+                event.location.isNotEmpty
+                    ? 'Klepněte na tlačítko výše pro vyhledání zajímavostí, památek a tipů k místu „${event.location}“.'
+                    : 'Zadejte místo události v úpravě záznamu, aby mohl AI průvodce připravit informace o lokalitě.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Fáze B: AI Příběh
+  // ---------------------------------------------------------------------------
 
   Widget _buildAiStoryCard(BuildContext context, EventItem event) {
     final theme = Theme.of(context);
@@ -307,13 +626,19 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
                 Icon(Icons.auto_awesome, color: scheme.primary, size: 20),
                 const SizedBox(width: 8),
                 Text(
-                  'Rodinný příběh',
+                  'Rodinný příběh (Fáze B)',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                     color: scheme.primary,
                   ),
                 ),
                 const Spacer(),
+                if (event.hasStory)
+                  IconButton(
+                    tooltip: 'Upravit text příběhu',
+                    icon: const Icon(Icons.edit_note),
+                    onPressed: () => _editStory(context, event),
+                  ),
                 if (_isGeneratingAi)
                   const SizedBox(
                     width: 20,
@@ -322,7 +647,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
                   )
                 else
                   IconButton(
-                    tooltip: event.hasStory ? 'Přegenerovat příběh' : 'Vytvořit příběh',
+                    tooltip: event.hasStory ? 'Přegenerovat finální příběh' : 'Vygenerovat finální příběh',
                     icon: Icon(event.hasStory ? Icons.refresh : Icons.play_arrow),
                     onPressed: () => _generateStory(context, event),
                   ),
@@ -330,13 +655,13 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
             ),
             const SizedBox(height: 8),
             if (event.hasStory)
-              Text(
+              SelectableText(
                 event.aiStory!,
                 style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
               )
             else
               Text(
-                'Zatím nebyl vygenerován žádný příběh. Stiskněte tlačítko pro spuštění AI průvodce.',
+                'Zatím nebyl vygenerován žádný příběh. Stiskněte tlačítko pro spuštění AI vypravěče, který vezme v potaz průběžné poznámky, počasí i navštívené místo.',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: scheme.onSurfaceVariant,
                   fontStyle: FontStyle.italic,
@@ -531,6 +856,100 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
   // Akce
   // ---------------------------------------------------------------------------
 
+  Future<void> _toggleStatus(BuildContext context, EventItem event) async {
+    final nextStatus = event.isDraft ? EventStatus.published : EventStatus.draft;
+    final repo = ServiceLocator.chronicle;
+    await repo.saveEvent(event.copyWith(status: nextStatus));
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            nextStatus == EventStatus.published
+                ? 'Událost byla úspěšně publikována do kroniky!'
+                : 'Událost byla vrácena do rozpracovaných (Draft).',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _addQuickNote(BuildContext context, EventItem event) async {
+    final textController = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Zapsat průběžnou poznámku'),
+        content: TextField(
+          controller: textController,
+          autofocus: true,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            hintText: 'Co se právě událo, postřeh dětí, zážitek...',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Zrušit')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Uložit')),
+        ],
+      ),
+    );
+
+    if (ok == true && textController.text.trim().isNotEmpty && context.mounted) {
+      final note = QuickNote(
+        id: IdGen.next('qn_'),
+        timestamp: DateTime.now(),
+        text: textController.text.trim(),
+      );
+      final updatedList = List<QuickNote>.from(event.quickNotes)..add(note);
+      final repo = ServiceLocator.chronicle;
+      await repo.saveEvent(event.copyWith(quickNotes: updatedList));
+    }
+  }
+
+  Future<void> _deleteQuickNote(BuildContext context, EventItem event, String noteId) async {
+    final updatedList = event.quickNotes.where((n) => n.id != noteId).toList();
+    final repo = ServiceLocator.chronicle;
+    await repo.saveEvent(event.copyWith(quickNotes: updatedList));
+  }
+
+  Future<void> _generateLocationGuide(BuildContext context, EventItem event) async {
+    if (event.location.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nejprve vyplňte název místa události')),
+      );
+      return;
+    }
+
+    setState(() => _isLoadingGuide = true);
+    try {
+      final ai = ServiceLocator.ai;
+      final result = await ai.generateLocationGuide(
+        location: event.location,
+        latitude: event.latitude,
+        longitude: event.longitude,
+      );
+
+      final repo = ServiceLocator.chronicle;
+      await repo.saveEvent(event.copyWith(locationGuideText: result.text));
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Průvodce načten (${result.sourceLabel})')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Chyba průvodce lokalitou: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingGuide = false);
+    }
+  }
+
   Future<void> _generateStory(BuildContext context, EventItem event) async {
     setState(() => _isGeneratingAi = true);
     try {
@@ -552,6 +971,41 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
       }
     } finally {
       if (mounted) setState(() => _isGeneratingAi = false);
+    }
+  }
+
+  Future<void> _editStory(BuildContext context, EventItem event) async {
+    final textController = TextEditingController(text: event.aiStory ?? '');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Upravit text příběhu'),
+        content: SizedBox(
+          width: 500,
+          child: TextField(
+            controller: textController,
+            maxLines: 12,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              hintText: 'Vlastní úprava příběhu...',
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Zrušit')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Uložit')),
+        ],
+      ),
+    );
+
+    if (ok == true && context.mounted) {
+      final repo = ServiceLocator.chronicle;
+      await repo.saveEvent(event.copyWith(aiStory: textController.text));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Příběh byl upraven a uložen')),
+        );
+      }
     }
   }
 
@@ -657,4 +1111,3 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
     }
   }
 }
-

@@ -42,6 +42,9 @@ abstract interface class ChronicleRepository {
 
   Future<EventItem> removeDay(String eventId, String dayId);
 
+  /// Importuje seznam událostí ve formátu JSON a sloučí je se stávajícími.
+  Future<int> importEventsJson(List<dynamic> jsonList);
+
   /// Uvolnění prostředků.
   Future<void> dispose();
 }

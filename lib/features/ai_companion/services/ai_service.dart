@@ -36,15 +36,7 @@ class AiStoryResult {
   String get sourceLabel => fromMock ? 'Offline generátor' : 'Google Gemini (${model ?? ''})';
 }
 
-/// AI průvodce – generuje rodinné příběhy z událostí kroniky.
-///
-/// Implementováno přímo přes standardní HTTP REST API (`https://generativelanguage.googleapis.com/v1beta/models/...`),
-/// což zaručuje 100% kompatibilitu se všemi typy API klíčů i formáty odpovědí bez závislosti
-/// na omezeních SDK knihoven.
-///
-/// Modely jsou nastaveny podle reálně dostupných a otestovaných modelů:
-/// - Primární výchozí: `gemini-flash-lite-latest` (blesková odezva pod 1s, bez 503)
-/// - Záložní modely (fallback): `gemini-3.5-flash-lite`, `gemini-3.5-flash`, `gemini-3-flash-preview`
+/// AI průvodce – generuje rodinné příběhy z událostí kroniky a tipy k lokalitě.
 class AiService {
   AiService({AppConfig? config, this.timeout = const Duration(seconds: 45), http.Client? client})
       : _config = config ?? AppConfig.instance,
@@ -65,7 +57,64 @@ class AiService {
     'gemini-3.6-flash',
   ];
 
-  /// Vygeneruje příběh celé akce, nebo jen jednoho dne ([day]).
+  /// Fáze A: Vygeneruje strukturované tipy o lokalitě (historie, současnost, tipy v okolí, nápady pro děti).
+  Future<AiStoryResult> generateLocationGuide({
+    required String location,
+    double? latitude,
+    double? longitude,
+  }) async {
+    final sw = Stopwatch()..start();
+    final prompt = '''
+Jsi laskavý a vzdělaný rodinný průvodce.
+Připrav stručný, přehledný a praktický přehled zajímavostí o tomto místě pro rodinný výlet:
+Místo: $location ${latitude != null && longitude != null ? '(GPS: ${latitude.toStringAsFixed(4)}, ${longitude.toStringAsFixed(4)})' : ''}
+
+Struktura výstupu (použij přehledné odrážky):
+🏛️ **Zajímavosti a historie:** (2-3 věty o tom, čím je místo výjimečné)
+🌲 **Co neminout v okolí:** (2-3 konkrétní tipy na zajímavá místa v pěší nebo krátké dojezdové vzdálenosti)
+🧒 **Zábava a tipy pro děti:** (co zaujme děti – hřiště, pověsti, dobrodružství, občerstvení)
+💡 **Praktická rada:** (parkování, terén, kočárky...)
+''';
+
+    AppLogger.I.info(_module, 'generate_location_guide_start', metrics: {
+      'location': location,
+      'mode': _config.useRealAi ? 'gemini' : 'mock',
+    });
+
+    if (!_config.useRealAi) {
+      final mock = '''
+🏛️ **Zajímavosti a historie:** $location je krásná lokalita s bohatou historií a čistou přírodou v okolí.
+🌲 **Co neminout v okolí:** Vyhlídková místa, místní lesní stezky a historické centrum.
+🧒 **Zábava a tipy pro děti:** Hledání přírodních pokladů a sběr šišek podél stezky.
+💡 **Praktická rada:** Pohodlná turistická obuv a svačina do batohu se vždy hodí!
+''';
+      return AiStoryResult(text: mock, fromMock: true, durationMs: sw.elapsedMilliseconds);
+    }
+
+    try {
+      final (text, usedModel, _, _) = await _generateWithRetry(
+        prompt: prompt,
+        initialModel: _config.geminiModel,
+        apiKey: _config.geminiApiKey,
+        callTimeout: timeout,
+        temperature: 0.6,
+        maxTokens: 800,
+      );
+
+      return AiStoryResult(
+        text: text,
+        fromMock: false,
+        durationMs: sw.elapsedMilliseconds,
+        model: usedModel,
+      );
+    } catch (e, st) {
+      AppLogger.I.error(_module, 'generate_location_guide_failed', error: e, stackTrace: st);
+      final fallback = 'Tipy k lokalitě $location se nepodařilo načíst online: ${_humanError(e)}';
+      return AiStoryResult(text: fallback, fromMock: true, durationMs: sw.elapsedMilliseconds);
+    }
+  }
+
+  /// Fáze B: Vygeneruje finální čtivý příběh celé akce nebo jednoho dne.
   Future<AiStoryResult> generateStory(EventItem event, {EventDay? day}) async {
     final sw = Stopwatch()..start();
     final scope = day == null ? 'event' : 'day';
@@ -186,8 +235,7 @@ class AiService {
                 'role': 'user',
                 'parts': [
                   {
-                    'text': 'Jsi laskavý rodinný kronikář. Píšeš česky, vřele a s humorem, '
-                        'krátké příběhy pro rodinnou kroniku rodiny ${_config.familyName}.\n\n$prompt',
+                    'text': prompt,
                   }
                 ],
               }
@@ -236,16 +284,13 @@ class AiService {
             return (text, currentModelName, pTokens, cTokens);
           }
 
-          // Analýza chybových HTTP kódů
           final code = response.statusCode;
           final errorBody = utf8.decode(response.bodyBytes);
 
-          // 503 Server Overloaded nebo 404 Model Not Found
           if (code == 503 || code == 404) {
             throw HttpException('HTTP $code: $errorBody');
           }
 
-          // 429 Rate Limit
           if (code == 429) {
             if (attempt < maxRetries) {
               AppLogger.I.warn(_module, 'gemini_429_rate_limit_retry', metrics: {
@@ -259,7 +304,6 @@ class AiService {
             throw HttpException('HTTP 429 Rate Limit: $errorBody');
           }
 
-          // Ostatní chyby (např. 400 špatný požadavek, 403 neplatný klíč)
           throw HttpException('HTTP $code: $errorBody');
         } catch (e, st) {
           lastError = e;
@@ -268,16 +312,14 @@ class AiService {
           final isTimeout = e is TimeoutException;
           final isHttp503or404 = e is HttpException && (e.message.contains('503') || e.message.contains('404'));
 
-          // Timeout nebo přetížení -> ihned zkusit další fallback model v pořadí
           if ((isTimeout || isHttp503or404) && mIdx < candidateModels.length - 1) {
             AppLogger.I.warn(_module, 'gemini_switching_to_next_model', metrics: {
               'failed_model': currentModelName,
               'reason': e.toString(),
             });
-            break; // Ukončí smyčku pokusů a přejde na další model
+            break;
           }
 
-          // U běžných výpadků zkusíme další pokus
           if (attempt < maxRetries && !isTimeout && !isHttp503or404) {
             await Future<void>.delayed(Duration(seconds: delaySeconds));
             delaySeconds *= 2;
@@ -303,9 +345,6 @@ class AiService {
   }
 
   /// Ověří spojení s Gemini API krátkým dotazem.
-  ///
-  /// Timeout pro test je nastaven na 12 sekund. Pokud primární model selže
-  /// nebo vyprší, automaticky vyzkouší záložní model.
   Future<String> testConnection({
     String? modelOverride,
     String? apiKeyOverride,
@@ -328,7 +367,7 @@ class AiService {
         callTimeout: timeout,
         temperature: 0.2,
         maxTokens: 50,
-        maxRetries: 1, // Pro test spojení stačí 1 pokus před fallbackem
+        maxRetries: 1,
       );
 
       final isFallback = usedModel != modelName;
@@ -354,16 +393,39 @@ class AiService {
     }
   }
 
-  /// Sestaví prompt z dat události.
+  /// Sestaví prompt z dat události včetně průběžných poznámek a tipů průvodce.
   String buildPrompt(EventItem event, {EventDay? day}) {
     final b = StringBuffer()
+      ..writeln('Jsi laskavý rodinný kronikář. Napiš čtivý, vřelý a humorný zápis do kroniky rodiny ${_config.familyName}.')
+      ..writeln()
       ..writeln('Akce: ${event.title}')
       ..writeln('Kategorie: ${event.category.label}')
       ..writeln('Datum: ${event.dateLabel}');
     if (event.location.isNotEmpty) b.writeln('Místo: ${event.location}');
     if (event.weather != null && event.weather!.isNotEmpty) b.writeln('Počasí: ${event.weather}');
+    if (event.distanceKm != null) b.writeln('Ujitá trasa: ${event.distanceKm} km');
+    if (event.durationMinutes != null) b.writeln('Doba trvání: ${event.durationMinutes} minut');
     if (event.participants.isNotEmpty) b.writeln('Účastníci: ${event.participants.join(', ')}');
-    if (event.description.isNotEmpty) b.writeln('Poznámky: ${event.description}');
+    if (event.description.isNotEmpty) b.writeln('Hlavní popis: ${event.description}');
+    if (event.extraNotes.isNotEmpty) b.writeln('Praktické tipy / postřehy: ${event.extraNotes}');
+
+    // Průvodce lokalitou
+    if (event.hasLocationGuide) {
+      b
+        ..writeln()
+        ..writeln('Kontext o navštíveném místě z průvodce:')
+        ..writeln(event.locationGuideText);
+    }
+
+    // Rychlé průběžné poznámky
+    if (event.quickNotes.isNotEmpty) {
+      b
+        ..writeln()
+        ..writeln('Průběžné časové poznámky rodiny během dne:');
+      for (final q in event.sortedQuickNotes) {
+        b.writeln('- ${Fmt.time(q.timestamp)}: ${q.text}');
+      }
+    }
 
     List<MomentItem> moments;
     if (day != null) {
@@ -389,11 +451,19 @@ class AiService {
     if (notes.isNotEmpty) {
       b
         ..writeln()
-        ..writeln('Popisky fotek v časovém pořadí:');
+        ..writeln('Popisky pořízených fotografií v časovém sledu:');
       for (final m in notes.take(30)) {
-        b.writeln('- ${Fmt.time(m.takenAt)} ${m.note}');
+        b.writeln('- ${Fmt.time(m.takenAt)}: ${m.note}');
       }
     }
+
+    b
+      ..writeln()
+      ..writeln('Požadavky na styl zápisu:')
+      ..writeln('- Napiš 2 až 4 plynulé odstavce.')
+      ..writeln('- V textu propoj to, co rodina reálně zažila a zapsala do poznámek, se zajímavostmi o místě.')
+      ..writeln('- Piš laskavě, živě, s citem pro rodinné vzpomínky.');
+
     return b.toString();
   }
 
@@ -421,6 +491,7 @@ class AiService {
     }
 
     final opening = switch (event.category) {
+      EventCategory.diary => 'Dnešní obyčejně neobyčejný den v kruhu rodiny. ',
       EventCategory.trip => 'Batohy na záda a hurá do přírody! ',
       EventCategory.culture => 'Tentokrát jsme vyměnili turistické boty za sváteční oblečení. ',
       EventCategory.school => 'Velký den pro naše malé umělce! ',
@@ -433,9 +504,18 @@ class AiService {
       ..write('${_capitalize(Fmt.longDate(event.startDate))} '
           '${event.participants.isEmpty ? 'jsme se' : 'se $who'} vydali na akci „${event.title}“$place. ');
     if (event.weather != null && event.weather!.isNotEmpty) {
-      b.write('Počasí nám přálo po svém: ${event.weather}. ');
+      b.write('Počasí: ${event.weather}. ');
+    }
+    if (event.distanceKm != null) {
+      b.write('V nohách máme pěkných ${event.distanceKm} km. ');
     }
     if (event.description.isNotEmpty) b.write('${_sentence(event.description)} ');
+
+    if (event.quickNotes.isNotEmpty) {
+      b.write('\n\nBěhem dne jsme si poznamenali: ');
+      b.write(event.quickNotes.map((q) => q.text).join('; '));
+      b.write('. ');
+    }
 
     if (event.hasDays) {
       b.write('\n\nAkce trvala ${Fmt.plural(event.durationDays, 'den', 'dny', 'dní')}. ');
@@ -446,16 +526,13 @@ class AiService {
 
     final notes = event.allMoments.where((m) => m.note.isNotEmpty).map((m) => m.note.toLowerCase()).toList();
     if (notes.isNotEmpty) {
-      b.write('\n\nNejhezčí chvíle? ${_capitalize(_joinCz(notes.take(5).toList()))}. ');
+      b.write('\n\nNejhezčí zachycené chvíle: ${_capitalize(_joinCz(notes.take(5).toList()))}. ');
     }
     final count = event.momentCount;
     if (count > 0) {
-      b.write('Domů jsme si odvezli ${Fmt.plural(count, 'fotku', 'fotky', 'fotek')} a spoustu zážitků.');
-    } else {
-      b.write('Fotky sice nemáme, ale zážitky zůstanou v srdci.');
+      b.write('Do kroniky ukládáme ${Fmt.plural(count, 'fotku', 'fotky', 'fotek')} a spoustu zážitků.');
     }
-    b.write('\n\n(Text vytvořil offline generátor FlyLog – pro skutečný AI příběh zadejte '
-        'Gemini API klíč v Nastavení.)');
+    b.write('\n\n(Text vytvořil offline generátor FlyLog – pro reálný AI příběh zadejte API klíč.)');
     return b.toString();
   }
 

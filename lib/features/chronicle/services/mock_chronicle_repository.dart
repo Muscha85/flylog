@@ -171,6 +171,26 @@ class MockChronicleRepository implements ChronicleRepository {
     return _store(event.copyWith(days: renumbered), 'day_removed', {'event_id': eventId, 'day_id': dayId});
   }
 
+  @override
+  Future<int> importEventsJson(List<dynamic> jsonList) async {
+    int imported = 0;
+    for (final item in jsonList) {
+      if (item is Map) {
+        try {
+          final event = EventItem.fromJson(item.cast<String, dynamic>());
+          _events[event.id] = event;
+          imported++;
+        } catch (e, st) {
+          AppLogger.I.error(LogModule.chronicle, 'import_single_event_failed', error: e, stackTrace: st);
+        }
+      }
+    }
+    if (imported > 0) {
+      await _commit('events_imported', {'count': imported});
+    }
+    return imported;
+  }
+
   /// Smaže uložená data a znovu nahraje ukázkovou kroniku.
   Future<void> resetToSampleData() async {
     _events

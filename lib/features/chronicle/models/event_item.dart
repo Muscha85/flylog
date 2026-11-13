@@ -3,9 +3,29 @@ import 'package:flutter/material.dart';
 import '../../../core/utils/formatters.dart';
 import 'event_day.dart';
 import 'moment_item.dart';
+import 'quick_note.dart';
+
+/// Stav záznamu v kronice.
+enum EventStatus {
+  draft('Rozpracováno', Icons.edit_note, Colors.orange),
+  published('Publikováno', Icons.check_circle_outline, Colors.green);
+
+  const EventStatus(this.label, this.icon, this.color);
+  final String label;
+  final IconData icon;
+  final Color color;
+
+  static EventStatus fromName(String? name) {
+    return EventStatus.values.firstWhere(
+      (s) => s.name == name,
+      orElse: () => EventStatus.published, // starší záznamy jsou published
+    );
+  }
+}
 
 /// Kategorie rodinné události.
 enum EventCategory {
+  diary('Deník / Běžný den', '📖', Icons.menu_book, 0xFF546E7A),
   trip('Výlet & Příroda', '🥾', Icons.hiking, 0xFF2E7D32),
   culture('Divadlo & Koncert', '🎭', Icons.theater_comedy, 0xFF6A1B9A),
   school('Besídka & Kroužky', '🎒', Icons.school, 0xFFEF6C00),
@@ -32,7 +52,7 @@ enum EventCategory {
   }
 }
 
-/// Událost v rodinné kronice – výlet, divadlo, besídka, relax nebo dovolená.
+/// Událost v rodinné kronice – deník, výlet, divadlo, besídka, relax nebo dovolená.
 class EventItem {
   const EventItem({
     required this.id,
@@ -40,15 +60,24 @@ class EventItem {
     required this.category,
     required this.startDate,
     this.endDate,
+    this.status = EventStatus.draft,
     this.location = '',
     this.latitude,
     this.longitude,
     this.description = '',
     this.weather,
+    this.weatherTempC,
+    this.weatherWindMs,
+    this.weatherDescription,
+    this.distanceKm,
+    this.durationMinutes,
+    this.extraNotes = '',
+    this.locationGuideText,
     this.aiStory,
     this.participants = const [],
     this.moments = const [],
     this.days = const [],
+    this.quickNotes = const [],
     required this.createdAt,
     required this.updatedAt,
   });
@@ -57,46 +86,55 @@ class EventItem {
   final String title;
   final EventCategory category;
   final DateTime startDate;
-
-  /// Konec u vícedenních akcí (včetně). `null` = jednodenní akce.
   final DateTime? endDate;
+  final EventStatus status;
 
   final String location;
   final double? latitude;
   final double? longitude;
   final String description;
 
-  /// Textový popis počasí, např. „☀️ 24 °C, slunečno“.
+  /// Souhrnný popis počasí (např. „☀️ 24 °C, slunečno“)
   final String? weather;
 
-  /// AI vygenerovaný rodinný příběh celé akce.
+  /// Parametrické počasí (Open-Meteo & ruční úprava)
+  final double? weatherTempC;
+  final double? weatherWindMs;
+  final String? weatherDescription;
+
+  /// Trasa a trvání
+  final double? distanceKm;
+  final int? durationMinutes;
+
+  /// Doplňující podrobnosti a tipy
+  final String extraNotes;
+
+  /// Fáze A AI: Průvodce lokalitou a zajímavosti
+  final String? locationGuideText;
+
+  /// Fáze B AI: Vygenerovaný (a uživatelem editovatelný) příběh
   final String? aiStory;
 
   final List<String> participants;
-
-  /// Momentky patřící k celé akci (u vícedenních akcí ty, které nejsou přiřazeny ke dni).
   final List<MomentItem> moments;
-
-  /// Jednotlivé dny vícedenní akce.
   final List<EventDay> days;
+
+  /// Průběžné časové poznámky v draftu
+  final List<QuickNote> quickNotes;
 
   final DateTime createdAt;
   final DateTime updatedAt;
 
+  bool get isDraft => status == EventStatus.draft;
+  bool get isPublished => status == EventStatus.published;
   bool get isMultiDay => endDate != null && !Fmt.isSameDay(startDate, endDate!);
-
-  /// Zda se má akce spravovat po dnech.
   bool get hasDays => days.isNotEmpty;
-
   int get durationDays => endDate == null ? 1 : Fmt.daysInclusive(startDate, endDate!);
-
   bool get hasStory => aiStory != null && aiStory!.trim().isNotEmpty;
-
+  bool get hasLocationGuide => locationGuideText != null && locationGuideText!.trim().isNotEmpty;
   bool get hasLocation => latitude != null && longitude != null;
-
   bool get isInPast => (endDate ?? startDate).isBefore(Fmt.dateOnly(DateTime.now()));
 
-  /// Všechny momentky (akce + všechny dny) seřazené podle času.
   List<MomentItem> get allMoments {
     final list = <MomentItem>[...moments, for (final d in days) ...d.moments];
     list.sort((a, b) => a.takenAt.compareTo(b.takenAt));
@@ -105,7 +143,6 @@ class EventItem {
 
   int get momentCount => moments.length + days.fold<int>(0, (sum, d) => sum + d.moments.length);
 
-  /// Úvodní fotka pro kartu v seznamu.
   MomentItem? get coverMoment {
     final all = allMoments;
     return all.isEmpty ? null : all.first;
@@ -114,6 +151,8 @@ class EventItem {
   String get dateLabel => Fmt.dateRange(startDate, endDate);
 
   List<EventDay> get sortedDays => [...days]..sort((a, b) => a.dayNumber.compareTo(b.dayNumber));
+
+  List<QuickNote> get sortedQuickNotes => [...quickNotes]..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
   EventDay? dayById(String id) {
     for (final d in days) {
@@ -129,16 +168,25 @@ class EventItem {
     DateTime? startDate,
     DateTime? endDate,
     bool clearEndDate = false,
+    EventStatus? status,
     String? location,
     double? latitude,
     double? longitude,
     bool clearCoordinates = false,
     String? description,
     String? weather,
+    double? weatherTempC,
+    double? weatherWindMs,
+    String? weatherDescription,
+    double? distanceKm,
+    int? durationMinutes,
+    String? extraNotes,
+    String? locationGuideText,
     String? aiStory,
     List<String>? participants,
     List<MomentItem>? moments,
     List<EventDay>? days,
+    List<QuickNote>? quickNotes,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -148,21 +196,29 @@ class EventItem {
       category: category ?? this.category,
       startDate: startDate ?? this.startDate,
       endDate: clearEndDate ? null : (endDate ?? this.endDate),
+      status: status ?? this.status,
       location: location ?? this.location,
       latitude: clearCoordinates ? null : (latitude ?? this.latitude),
       longitude: clearCoordinates ? null : (longitude ?? this.longitude),
       description: description ?? this.description,
       weather: weather ?? this.weather,
+      weatherTempC: weatherTempC ?? this.weatherTempC,
+      weatherWindMs: weatherWindMs ?? this.weatherWindMs,
+      weatherDescription: weatherDescription ?? this.weatherDescription,
+      distanceKm: distanceKm ?? this.distanceKm,
+      durationMinutes: durationMinutes ?? this.durationMinutes,
+      extraNotes: extraNotes ?? this.extraNotes,
+      locationGuideText: locationGuideText ?? this.locationGuideText,
       aiStory: aiStory ?? this.aiStory,
       participants: participants ?? this.participants,
       moments: moments ?? this.moments,
       days: days ?? this.days,
+      quickNotes: quickNotes ?? this.quickNotes,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 
-  /// Vrátí kopii s upraveným dnem (podle id).
   EventItem replaceDay(EventDay day) {
     return copyWith(days: [for (final d in days) d.id == day.id ? day : d]);
   }
@@ -173,15 +229,24 @@ class EventItem {
         'category': category.name,
         'startDate': startDate.toIso8601String(),
         'endDate': endDate?.toIso8601String(),
+        'status': status.name,
         'location': location,
         'latitude': latitude,
         'longitude': longitude,
         'description': description,
         'weather': weather,
+        'weatherTempC': weatherTempC,
+        'weatherWindMs': weatherWindMs,
+        'weatherDescription': weatherDescription,
+        'distanceKm': distanceKm,
+        'durationMinutes': durationMinutes,
+        'extraNotes': extraNotes,
+        'locationGuideText': locationGuideText,
         'aiStory': aiStory,
         'participants': participants,
         'moments': moments.map((m) => m.toJson()).toList(),
         'days': days.map((d) => d.toJson()).toList(),
+        'quickNotes': quickNotes.map((q) => q.toJson()).toList(),
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
       };
@@ -189,16 +254,24 @@ class EventItem {
   factory EventItem.fromJson(Map<String, dynamic> json) {
     final now = DateTime.now();
     return EventItem(
-      id: json['id'] as String,
-      title: json['title'] as String? ?? '',
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? 'Bez názvu',
       category: EventCategory.fromName(json['category'] as String?),
       startDate: DateTime.tryParse(json['startDate'] as String? ?? '') ?? now,
       endDate: DateTime.tryParse(json['endDate'] as String? ?? ''),
+      status: EventStatus.fromName(json['status'] as String?),
       location: json['location'] as String? ?? '',
       latitude: (json['latitude'] as num?)?.toDouble(),
       longitude: (json['longitude'] as num?)?.toDouble(),
       description: json['description'] as String? ?? '',
       weather: json['weather'] as String?,
+      weatherTempC: (json['weatherTempC'] as num?)?.toDouble(),
+      weatherWindMs: (json['weatherWindMs'] as num?)?.toDouble(),
+      weatherDescription: json['weatherDescription'] as String?,
+      distanceKm: (json['distanceKm'] as num?)?.toDouble(),
+      durationMinutes: (json['durationMinutes'] as num?)?.toInt(),
+      extraNotes: json['extraNotes'] as String? ?? '',
+      locationGuideText: json['locationGuideText'] as String?,
       aiStory: json['aiStory'] as String?,
       participants: ((json['participants'] as List?) ?? const []).map((e) => e.toString()).toList(),
       moments: ((json['moments'] as List?) ?? const [])
@@ -209,9 +282,12 @@ class EventItem {
           .whereType<Map>()
           .map((d) => EventDay.fromJson(d.cast<String, dynamic>()))
           .toList(),
+      quickNotes: ((json['quickNotes'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((q) => QuickNote.fromJson(q.cast<String, dynamic>()))
+          .toList(),
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? now,
       updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? now,
     );
   }
 }
-
