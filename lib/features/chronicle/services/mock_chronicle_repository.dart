@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -140,10 +141,35 @@ class MockChronicleRepository implements ChronicleRepository {
   @override
   Future<EventItem> removeMoment(String eventId, String momentId) async {
     final event = _require(eventId);
+    final targetMoment = event.allMoments.where((m) => m.id == momentId).firstOrNull;
+
+    // Smazání lokálního souboru z mezipaměti / úložiště
+    if (targetMoment != null && !targetMoment.isRemote) {
+      try {
+        final f = File(targetMoment.path);
+        if (await f.exists()) {
+          await f.delete();
+        }
+      } catch (e, st) {
+        AppLogger.I.warn(_module, 'moment_file_delete_failed', error: e, metrics: {'path': targetMoment.path});
+      }
+    }
+
+    final isEventCover = targetMoment != null && event.coverPhotoPath == targetMoment.path;
     List<MomentItem> without(List<MomentItem> list) => list.where((m) => m.id != momentId).toList();
+
     final updated = event.copyWith(
+      clearCoverPhoto: isEventCover,
+      coverPhotoPath: isEventCover ? null : event.coverPhotoPath,
       moments: without(event.moments),
-      days: [for (final d in event.days) d.copyWith(moments: without(d.moments))],
+      days: [
+        for (final d in event.days)
+          d.copyWith(
+            clearCoverPhoto: targetMoment != null && d.coverPhotoPath == targetMoment.path,
+            coverPhotoPath: (targetMoment != null && d.coverPhotoPath == targetMoment.path) ? null : d.coverPhotoPath,
+            moments: without(d.moments),
+          )
+      ],
     );
     return _store(updated, 'moment_removed', {'event_id': eventId, 'moment_id': momentId});
   }

@@ -430,6 +430,7 @@ class _ActiveDraftBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final cover = draft.effectiveCoverMoment;
 
     return Card(
       elevation: 2,
@@ -473,19 +474,42 @@ class _ActiveDraftBanner extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              Text(
-                '${draft.category.emoji} ${draft.title}',
-                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-              ),
-              if (draft.location.isNotEmpty) ...[
-                const SizedBox(height: 2),
-                Text(
-                  '📍 ${draft.location}',
-                  style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-                ),
-              ],
               const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${draft.category.emoji} ${draft.title}',
+                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                        if (draft.location.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            '📍 ${draft.location}',
+                            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (cover != null) ...[
+                    const SizedBox(width: 10),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: SizedBox(
+                        width: 58,
+                        height: 58,
+                        child: _buildCoverImage(cover),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   FilledButton.tonalIcon(
@@ -513,6 +537,21 @@ class _ActiveDraftBanner extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildCoverImage(MomentItem m) {
+    if (m.isRemote) {
+      return Image.network(
+        m.path,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade300),
+      );
+    }
+    return Image.file(
+      File(m.path),
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade300),
     );
   }
 }

@@ -748,7 +748,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
                         const SizedBox(height: 8),
                       ],
                       if (day.moments.isNotEmpty)
-                        _buildMomentsGrid(context, event, day.moments)
+                        _buildMomentsGrid(context, event, day.moments, dayId: day.id)
                       else
                         const Text('Žádné fotky pro tento den.', style: TextStyle(color: Colors.grey)),
                     ],
@@ -790,7 +790,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
     );
   }
 
-  Widget _buildMomentsGrid(BuildContext context, EventItem event, List<MomentItem> moments) {
+  Widget _buildMomentsGrid(BuildContext context, EventItem event, List<MomentItem> moments, {String? dayId}) {
     if (moments.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(24),
@@ -798,6 +798,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
         child: const Text('Zatím žádné momentky. Přidejte fotky tlačítkem výše.'),
       );
     }
+
+    final effectiveCover = dayId != null
+        ? event.dayById(dayId)?.effectiveCoverMoment
+        : event.effectiveCoverMoment;
 
     return GridView.builder(
       shrinkWrap: true,
@@ -811,26 +815,100 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
       itemCount: moments.length,
       itemBuilder: (context, index) {
         final moment = moments[index];
+        final isCover = effectiveCover?.id == moment.id || effectiveCover?.path == moment.path;
+
         return ClipRRect(
           borderRadius: BorderRadius.circular(10),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              _buildImageWidget(moment),
-              if (moment.hasLocation)
+          child: InkWell(
+            onTap: () => _openPhotoViewer(context, event, moment, isCover: isCover, dayId: dayId),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _buildImageWidget(moment),
                 Positioned(
-                  right: 4,
-                  bottom: 4,
-                  child: Container(
-                    padding: const EdgeInsets.all(2),
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: 36,
+                  child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.6),
-                      borderRadius: BorderRadius.circular(4),
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.black.withValues(alpha: 0.6), Colors.transparent],
+                      ),
                     ),
-                    child: const Icon(Icons.pin_drop, size: 12, color: Colors.white),
                   ),
                 ),
-            ],
+                if (isCover)
+                  Positioned(
+                    left: 4,
+                    top: 4,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade700,
+                        borderRadius: BorderRadius.circular(6),
+                        boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 3)],
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.star, size: 11, color: Colors.white),
+                          SizedBox(width: 3),
+                          Text('Úvodní', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Positioned(
+                    left: 4,
+                    top: 4,
+                    child: InkWell(
+                      onTap: () => _setCoverPhoto(context, event, moment, dayId: dayId),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.star_border, size: 14, color: Colors.white70),
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  right: 4,
+                  top: 4,
+                  child: InkWell(
+                    onTap: () => _confirmDeletePhoto(context, event, moment),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.delete_outline, size: 14, color: Colors.white),
+                    ),
+                  ),
+                ),
+                if (moment.hasLocation)
+                  Positioned(
+                    right: 4,
+                    bottom: 4,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Icon(Icons.pin_drop, size: 12, color: Colors.white),
+                    ),
+                  ),
+              ],
+            ),
           ),
         );
       },
@@ -849,6 +927,124 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
       File(m.path),
       fit: BoxFit.cover,
       errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade300),
+    );
+  }
+
+  Future<void> _setCoverPhoto(BuildContext context, EventItem event, MomentItem moment, {String? dayId}) async {
+    final repo = ServiceLocator.chronicle;
+    if (dayId != null) {
+      final day = event.dayById(dayId);
+      if (day != null) {
+        final updatedDay = day.copyWith(coverPhotoPath: moment.path);
+        await repo.saveDay(event.id, updatedDay);
+      }
+    } else {
+      final updated = event.copyWith(coverPhotoPath: moment.path);
+      await repo.saveEvent(updated);
+    }
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Fotka nastavena jako úvodní ⭐')),
+      );
+    }
+  }
+
+  Future<void> _confirmDeletePhoto(BuildContext context, EventItem event, MomentItem moment) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Odstranit fotku?'),
+        content: const Text('Opravdu chcete tuto fotografii odstranit z kroniky?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Zrušit')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Odstranit'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      final repo = ServiceLocator.chronicle;
+      await repo.removeMoment(event.id, moment.id);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Fotka byla odstraněna')),
+        );
+      }
+    }
+  }
+
+  void _openPhotoViewer(BuildContext context, EventItem event, MomentItem moment, {required bool isCover, String? dayId}) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.all(12),
+        backgroundColor: Colors.black87,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AppBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              leading: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+              title: Text(
+                Fmt.dateTime(moment.takenAt),
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+              actions: [
+                if (!isCover)
+                  IconButton(
+                    icon: const Icon(Icons.star_border, color: Colors.amber),
+                    tooltip: 'Nastavit jako úvodní',
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _setCoverPhoto(context, event, moment, dayId: dayId);
+                    },
+                  )
+                else
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12),
+                    child: Center(
+                      child: Text('⭐ Úvodní fotka', style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                  tooltip: 'Odstranit fotku',
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _confirmDeletePhoto(context, event, moment);
+                  },
+                ),
+              ],
+            ),
+            Flexible(
+              child: InteractiveViewer(
+                minScale: 0.8,
+                maxScale: 4.0,
+                child: _buildImageWidget(moment),
+              ),
+            ),
+            if (moment.caption != null && moment.caption!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  moment.caption!,
+                  style: const TextStyle(color: Colors.white70),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
     );
   }
 

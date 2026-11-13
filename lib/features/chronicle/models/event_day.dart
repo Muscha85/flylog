@@ -9,6 +9,7 @@ class EventDay {
     this.title = '',
     this.note = '',
     this.weather,
+    this.coverPhotoPath,
     this.aiStory,
     this.moments = const [],
   });
@@ -27,6 +28,9 @@ class EventDay {
 
   final String? weather;
 
+  /// Cesta nebo URL k vybrané úvodní fotce dne.
+  final String? coverPhotoPath;
+
   /// AI vygenerovaný příběh dne.
   final String? aiStory;
 
@@ -37,6 +41,18 @@ class EventDay {
 
   bool get hasStory => aiStory != null && aiStory!.trim().isNotEmpty;
 
+  /// Vybraná úvodní fotka dne, případně první fotka v pořadí.
+  MomentItem? get effectiveCoverMoment {
+    if (coverPhotoPath != null) {
+      final found = moments.where((m) => m.path == coverPhotoPath).firstOrNull;
+      if (found != null) return found;
+    }
+    return moments.isEmpty ? null : moments.first;
+  }
+
+  /// Cesta k efektivní úvodní fotce dne.
+  String? get effectiveCoverPhoto => effectiveCoverMoment?.path ?? coverPhotoPath;
+
   EventDay copyWith({
     String? id,
     int? dayNumber,
@@ -44,6 +60,8 @@ class EventDay {
     String? title,
     String? note,
     String? weather,
+    String? coverPhotoPath,
+    bool clearCoverPhoto = false,
     String? aiStory,
     List<MomentItem>? moments,
   }) {
@@ -54,6 +72,7 @@ class EventDay {
       title: title ?? this.title,
       note: note ?? this.note,
       weather: weather ?? this.weather,
+      coverPhotoPath: clearCoverPhoto ? null : (coverPhotoPath ?? this.coverPhotoPath),
       aiStory: aiStory ?? this.aiStory,
       moments: moments ?? this.moments,
     );
@@ -66,6 +85,7 @@ class EventDay {
         'title': title,
         'note': note,
         'weather': weather,
+        'coverPhotoPath': coverPhotoPath,
         'aiStory': aiStory,
         'moments': moments.map((m) => m.toJson()).toList(),
       };
@@ -78,6 +98,7 @@ class EventDay {
       title: json['title'] as String? ?? '',
       note: json['note'] as String? ?? '',
       weather: json['weather'] as String?,
+      coverPhotoPath: json['coverPhotoPath'] as String?,
       aiStory: json['aiStory'] as String?,
       moments: ((json['moments'] as List?) ?? const [])
           .whereType<Map>()

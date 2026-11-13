@@ -72,6 +72,7 @@ class EventItem {
     this.distanceKm,
     this.durationMinutes,
     this.extraNotes = '',
+    this.coverPhotoPath,
     this.locationGuideText,
     this.aiStory,
     this.participants = const [],
@@ -109,6 +110,9 @@ class EventItem {
   /// Doplňující podrobnosti a tipy
   final String extraNotes;
 
+  /// Cesta nebo URL k vybrané úvodní / titulní fotce události.
+  final String? coverPhotoPath;
+
   /// Fáze A AI: Průvodce lokalitou a zajímavosti
   final String? locationGuideText;
 
@@ -143,10 +147,21 @@ class EventItem {
 
   int get momentCount => moments.length + days.fold<int>(0, (sum, d) => sum + d.moments.length);
 
-  MomentItem? get coverMoment {
+  /// Efektivní vybraná úvodní momentka (podle [coverPhotoPath]), případně první v pořadí.
+  MomentItem? get effectiveCoverMoment {
     final all = allMoments;
+    if (coverPhotoPath != null) {
+      final found = all.where((m) => m.path == coverPhotoPath).firstOrNull;
+      if (found != null) return found;
+    }
     return all.isEmpty ? null : all.first;
   }
+
+  /// Cesta k efektivní úvodní fotce události.
+  String? get effectiveCoverPhoto => effectiveCoverMoment?.path ?? coverPhotoPath;
+
+  /// Zpětně kompatibilní zástupce pro úvodní momentku.
+  MomentItem? get coverMoment => effectiveCoverMoment;
 
   String get dateLabel => Fmt.dateRange(startDate, endDate);
 
@@ -181,6 +196,8 @@ class EventItem {
     double? distanceKm,
     int? durationMinutes,
     String? extraNotes,
+    String? coverPhotoPath,
+    bool clearCoverPhoto = false,
     String? locationGuideText,
     String? aiStory,
     List<String>? participants,
@@ -208,6 +225,7 @@ class EventItem {
       distanceKm: distanceKm ?? this.distanceKm,
       durationMinutes: durationMinutes ?? this.durationMinutes,
       extraNotes: extraNotes ?? this.extraNotes,
+      coverPhotoPath: clearCoverPhoto ? null : (coverPhotoPath ?? this.coverPhotoPath),
       locationGuideText: locationGuideText ?? this.locationGuideText,
       aiStory: aiStory ?? this.aiStory,
       participants: participants ?? this.participants,
@@ -241,6 +259,7 @@ class EventItem {
         'distanceKm': distanceKm,
         'durationMinutes': durationMinutes,
         'extraNotes': extraNotes,
+        'coverPhotoPath': coverPhotoPath,
         'locationGuideText': locationGuideText,
         'aiStory': aiStory,
         'participants': participants,
@@ -271,6 +290,7 @@ class EventItem {
       distanceKm: (json['distanceKm'] as num?)?.toDouble(),
       durationMinutes: (json['durationMinutes'] as num?)?.toInt(),
       extraNotes: json['extraNotes'] as String? ?? '',
+      coverPhotoPath: json['coverPhotoPath'] as String?,
       locationGuideText: json['locationGuideText'] as String?,
       aiStory: json['aiStory'] as String?,
       participants: ((json['participants'] as List?) ?? const []).map((e) => e.toString()).toList(),

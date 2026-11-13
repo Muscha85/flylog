@@ -41,7 +41,7 @@ class StaticHtmlBuilder {
       ..writeln('<meta property="og:title" content="${_e(event.title)}">')
       ..writeln('<meta property="og:description" content="${_e(_metaDescription(event))}">')
       ..writeln('<meta property="og:type" content="article">');
-    final cover = event.coverMoment;
+    final cover = event.effectiveCoverMoment;
     if (cover != null) {
       b.writeln('<meta property="og:image" content="${_e(_imageUrl(cover))}">');
     }

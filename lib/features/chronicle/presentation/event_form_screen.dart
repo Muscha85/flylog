@@ -599,6 +599,7 @@ class _EventFormScreenState extends State<EventFormScreen> {
         distanceKm: dist,
         durationMinutes: dur,
         extraNotes: _extraNotesController.text.trim(),
+        coverPhotoPath: widget.existingEvent?.coverPhotoPath,
         locationGuideText: widget.existingEvent?.locationGuideText,
         aiStory: widget.existingEvent?.aiStory,
         participants: _selectedParticipants,
