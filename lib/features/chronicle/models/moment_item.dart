@@ -27,6 +27,9 @@ class MomentItem {
   /// Popisek / poznámka k fotce.
   final String note;
 
+  /// Alias pro popisek fotky.
+  String get caption => note;
+
   /// GPS souřadnice pořízení (z EXIF nebo z aktuální polohy).
   final double? latitude;
   final double? longitude;

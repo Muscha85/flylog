@@ -150,8 +150,8 @@ class MockChronicleRepository implements ChronicleRepository {
         if (await f.exists()) {
           await f.delete();
         }
-      } catch (e, st) {
-        AppLogger.I.warn(_module, 'moment_file_delete_failed', error: e, metrics: {'path': targetMoment.path});
+      } catch (e) {
+        AppLogger.I.warn(LogModule.chronicle, 'moment_file_delete_failed', error: e, metrics: {'path': targetMoment.path});
       }
     }
 

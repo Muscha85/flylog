@@ -96,7 +96,7 @@ class BackupService {
         allowedExtensions: ['json'],
       );
 
-      if (result == null || result.isEmpty || result.first.path == null) {
+      if (result.isEmpty || result.first.path == null) {
         return const BackupImportResult(
           importedCount: 0,
           skippedCount: 0,

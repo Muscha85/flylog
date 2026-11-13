@@ -1032,11 +1032,11 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
                 child: _buildImageWidget(moment),
               ),
             ),
-            if (moment.caption != null && moment.caption!.isNotEmpty)
+            if (moment.note.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.all(12),
                 child: Text(
-                  moment.caption!,
+                  moment.note,
                   style: const TextStyle(color: Colors.white70),
                   textAlign: TextAlign.center,
                 ),
