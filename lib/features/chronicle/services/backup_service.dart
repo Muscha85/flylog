@@ -96,7 +96,7 @@ class BackupService {
         allowedExtensions: ['json'],
       );
 
-      if (result == null || result.files.isEmpty || result.files.first.path == null) {
+      if (result == null || result.isEmpty || result.first.path == null) {
         return const BackupImportResult(
           importedCount: 0,
           skippedCount: 0,
@@ -105,7 +105,7 @@ class BackupService {
         );
       }
 
-      final file = File(result.files.first.path!);
+      final file = File(result.first.path!);
       final content = await file.readAsString(encoding: utf8);
       final Map<String, dynamic> json = jsonDecode(content);
 
