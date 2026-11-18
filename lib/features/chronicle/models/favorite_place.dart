@@ -2,15 +2,17 @@
 class FavoritePlace {
   const FavoritePlace({
     required this.name,
-    required this.latitude,
-    required this.longitude,
+    this.latitude,
+    this.longitude,
     this.country = 'Česko',
   });
 
   final String name;
-  final double latitude;
-  final double longitude;
+  final double? latitude;
+  final double? longitude;
   final String country;
+
+  bool get hasCoordinates => latitude != null && longitude != null;
 
   Map<String, dynamic> toJson() => {
         'name': name,
@@ -22,8 +24,8 @@ class FavoritePlace {
   factory FavoritePlace.fromJson(Map<String, dynamic> json) {
     return FavoritePlace(
       name: json['name'] as String? ?? '',
-      latitude: (json['latitude'] as num?)?.toDouble() ?? 0.0,
-      longitude: (json['longitude'] as num?)?.toDouble() ?? 0.0,
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
       country: json['country'] as String? ?? 'Česko',
     );
   }

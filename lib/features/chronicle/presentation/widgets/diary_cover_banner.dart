@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/utils/formatters.dart';
+import '../../../../core/utils/formatters.dart';
 import '../../models/event_item.dart';
 
 /// Výchozí moderní grafický banner pro záznamy bez nahrané fotografie
@@ -177,3 +177,4 @@ class DiaryCoverBanner extends StatelessWidget {
     );
   }
 }
+

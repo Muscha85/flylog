@@ -135,3 +135,4 @@ class EventRatingBar extends StatelessWidget {
     }
   }
 }
+
