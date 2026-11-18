@@ -1,7 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../../core/di/service_locator.dart';
 import '../../../core/utils/formatters.dart';
@@ -11,6 +14,8 @@ import '../../chronicle/models/event_item.dart';
 import '../../chronicle/models/moment_item.dart';
 import '../../chronicle/models/quick_note.dart';
 import 'event_form_screen.dart';
+import 'widgets/diary_cover_banner.dart';
+import 'widgets/event_rating_bar.dart';
 
 /// Detail události rodinné kroniky.
 ///
@@ -73,7 +78,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
           return _buildNotFound(context);
         }
 
-        final content = _buildContent(context, event);
+        final content = _buildContent(context, event, events);
 
         if (widget.embedded) {
           return content;
@@ -107,7 +112,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
     );
   }
 
-  Widget _buildContent(BuildContext context, EventItem event) {
+  Widget _buildContent(BuildContext context, EventItem event, List<EventItem> allEvents) {
     final cover = event.coverMoment;
 
     if (event.hasDays) {
@@ -117,7 +122,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
     return CustomScrollView(
       slivers: [
         SliverAppBar(
-          expandedHeight: cover != null ? 240 : 140,
+          expandedHeight: cover != null ? 240 : 160,
           pinned: true,
           flexibleSpace: FlexibleSpaceBar(
             title: Text(
@@ -144,17 +149,17 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
                       ),
                     ],
                   )
-                : Container(
-                    color: event.category.color.withValues(alpha: 0.8),
-                    child: Center(
-                      child: Text(
-                        event.category.emoji,
-                        style: const TextStyle(fontSize: 64),
-                      ),
-                    ),
+                : DiaryCoverBanner(
+                    event: event,
+                    height: 180,
                   ),
           ),
           actions: [
+            IconButton(
+              tooltip: 'Sdílet zážitek',
+              icon: const Icon(Icons.share_outlined),
+              onPressed: () => _showShareBottomSheet(context, event),
+            ),
             IconButton(
               tooltip: 'Exportovat webové HTML',
               icon: const Icon(Icons.html_outlined),
@@ -216,6 +221,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
                 _buildLocationGuideCard(context, event),
                 const SizedBox(height: 16),
                 _buildAiStoryCard(context, event),
+                const SizedBox(height: 16),
+                _buildRelatedEventsSection(context, event, allEvents),
                 const SizedBox(height: 16),
                 if (event.hasDays) ...[
                   _buildDaysSection(context, event),
@@ -385,6 +392,48 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
             if (event.extraNotes.isNotEmpty) ...[
               _buildMetaRow(Icons.lightbulb_outline, 'Detaily & Tipy', event.extraNotes),
             ],
+            const Divider(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Hodnocení zážitku',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                if (event.hasRating)
+                  Text(
+                    '${event.eventRating!.emoji} ${event.eventRating!.label}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      color: scheme.primary,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            EventRatingBar(
+              selectedRating: event.rating,
+              onRatingChanged: (newRating) async {
+                final repo = ServiceLocator.chronicle;
+                await repo.saveEvent(event.copyWith(rating: newRating));
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      duration: const Duration(seconds: 1),
+                      content: Text(
+                        newRating != null
+                            ? 'Hodnocení uloženo: ${EventRating.fromStars(newRating)?.emoji} ${EventRating.fromStars(newRating)?.label}'
+                            : 'Hodnocení odebráno',
+                      ),
+                    ),
+                  );
+                }
+              },
+            ),
           ],
         ),
       ),
@@ -1303,6 +1352,338 @@ class _EventDetailScreenState extends State<EventDetailScreen> with SingleTicker
       await repo.deleteEvent(event.id);
       if (context.mounted && !widget.embedded) {
         Navigator.of(context).pop();
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Související události a propojování (Hyperlinky)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildRelatedEventsSection(BuildContext context, EventItem event, List<EventItem> allEvents) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    final relatedEvents = allEvents.where((e) => event.relatedEventIds.contains(e.id)).toList();
+
+    return Card(
+      elevation: 0,
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.hub_outlined, color: scheme.primary, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Související události a výlety',
+                      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                TextButton.icon(
+                  icon: const Icon(Icons.add_link, size: 16),
+                  label: const Text('Propojit'),
+                  onPressed: () => _showLinkEventDialog(context, event, allEvents),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (relatedEvents.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Zatím nejsou propojeny žádné související záznamy (např. předchozí návštěva nebo navazující akce).',
+                  style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: relatedEvents.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (ctx, idx) {
+                  final rel = relatedEvents[idx];
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: CircleAvatar(
+                      backgroundColor: rel.category.color.withValues(alpha: 0.2),
+                      child: Text(rel.category.emoji, style: const TextStyle(fontSize: 16)),
+                    ),
+                    title: Text(
+                      rel.title,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                    subtitle: Text(
+                      '${rel.dateLabel}${rel.location.isNotEmpty ? " · ${rel.location}" : ""}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.link_off, size: 18),
+                          tooltip: 'Zrušit propojení',
+                          onPressed: () => _unlinkEvents(context, event, rel),
+                        ),
+                        const Icon(Icons.arrow_forward_ios, size: 14),
+                      ],
+                    ),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => EventDetailScreen(eventId: rel.id),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showLinkEventDialog(BuildContext context, EventItem currentEvent, List<EventItem> allEvents) async {
+    final available = allEvents.where((e) => e.id != currentEvent.id && !currentEvent.relatedEventIds.contains(e.id)).toList();
+
+    if (available.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nebyly nalezeny žádné další události k propojení.')),
+      );
+      return;
+    }
+
+    String searchFilter = '';
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            final candidates = available.where((e) {
+              if (searchFilter.isEmpty) return true;
+              return '${e.title} ${e.location} ${e.dateLabel}'.toLowerCase().contains(searchFilter.toLowerCase());
+            }).toList();
+
+            return AlertDialog(
+              title: const Text('Propojit související záznam'),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: 380,
+                child: Column(
+                  children: [
+                    TextField(
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        hintText: 'Hledat podle názvu či místa...',
+                        prefixIcon: Icon(Icons.search, size: 20),
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (val) => setDialogState(() => searchFilter = val),
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: candidates.isEmpty
+                          ? const Center(child: Text('Žádná událost neodpovídá hledání.'))
+                          : ListView.builder(
+                              itemCount: candidates.length,
+                              itemBuilder: (c, i) {
+                                final item = candidates[i];
+                                return ListTile(
+                                  leading: Text(item.category.emoji, style: const TextStyle(fontSize: 20)),
+                                  title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                  subtitle: Text('${item.dateLabel}${item.location.isNotEmpty ? " · ${item.location}" : ""}'),
+                                  onTap: () async {
+                                    Navigator.pop(ctx);
+                                    await _linkEvents(context, currentEvent, item);
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Zavřít'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _linkEvents(BuildContext context, EventItem current, EventItem target) async {
+    final repo = ServiceLocator.chronicle;
+    final currentRel = {...current.relatedEventIds, target.id}.toList();
+    final targetRel = {...target.relatedEventIds, current.id}.toList();
+
+    await repo.saveEvent(current.copyWith(relatedEventIds: currentRel));
+    await repo.saveEvent(target.copyWith(relatedEventIds: targetRel));
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Propojeno s „${target.title}“')),
+      );
+    }
+  }
+
+  Future<void> _unlinkEvents(BuildContext context, EventItem current, EventItem target) async {
+    final repo = ServiceLocator.chronicle;
+    final currentRel = current.relatedEventIds.where((id) => id != target.id).toList();
+    final targetRel = target.relatedEventIds.where((id) => id != current.id).toList();
+
+    await repo.saveEvent(current.copyWith(relatedEventIds: currentRel));
+    await repo.saveEvent(target.copyWith(relatedEventIds: targetRel));
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Propojení s „${target.title}“ bylo zrušeno')),
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sdílení záznamu dalším lidem (Zpráva & HTML)
+  // ---------------------------------------------------------------------------
+
+  Future<void> _showShareBottomSheet(BuildContext context, EventItem event) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade400,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Text(
+                'Sdílet událost',
+                style: Theme.of(sheetCtx).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFFE8F5E9),
+                  child: Icon(Icons.chat_bubble_outline, color: Colors.green),
+                ),
+                title: const Text('Formátovaná zpráva (WhatsApp / SMS / E-mail)', style: TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: const Text('Hezký textový souhrn s počasím, hodnocením a fotkami'),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  _shareFormattedMessage(context, event);
+                },
+              ),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFFE3F2FD),
+                  child: Icon(Icons.html_outlined, color: Colors.blue),
+                ),
+                title: const Text('Samostatný HTML soubor (Webová kronika)', style: TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: const Text('Kompletní offline webový soubor pro prohlížeč na mobilu i PC'),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  _shareHtmlFile(context, event);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _shareFormattedMessage(BuildContext context, EventItem event) async {
+    try {
+      final buf = StringBuffer();
+      buf.writeln('📖 ${event.title}');
+      buf.writeln('🗓 ${event.dateLabel}');
+      if (event.location.isNotEmpty) buf.writeln('📍 Místo: ${event.location}');
+      if (event.hasRating) buf.writeln('⭐ Hodnocení: ${event.eventRating!.emoji} ${event.eventRating!.label}');
+      final weather = _formatWeather(event);
+      if (weather.isNotEmpty) buf.writeln('☀️ Počasí: $weather');
+      if (event.participants.isNotEmpty) buf.writeln('👥 Účastníci: ${event.participants.join(", ")}');
+      if (event.description.isNotEmpty) {
+        buf.writeln('\n${event.description}');
+      }
+      if (event.aiStory != null && event.aiStory!.isNotEmpty) {
+        buf.writeln('\n${event.aiStory}');
+      }
+
+      final files = <XFile>[];
+      for (final m in event.moments) {
+        if (!m.isRemote) {
+          final f = File(m.path);
+          if (f.existsSync()) {
+            files.add(XFile(m.path));
+          }
+        }
+      }
+
+      await SharePlus.instance.share(
+        ShareParams(
+          files: files,
+          text: buf.toString(),
+          title: event.title,
+        ),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Chyba při sdílení: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _shareHtmlFile(BuildContext context, EventItem event) async {
+    try {
+      final builder = ServiceLocator.html;
+      final html = builder.build(event);
+      final tempDir = await getTemporaryDirectory();
+      final cleanTitle = event.title.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+      final fileName = 'flylog_${event.id}_$cleanTitle.html';
+      final file = File('${tempDir.path}${Platform.pathSeparator}$fileName');
+      await file.writeAsString(html, encoding: utf8);
+
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path, mimeType: 'text/html')],
+          title: 'HTML: ${event.title}',
+          text: 'Webová rodinná kronika: ${event.title}',
+        ),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Chyba při exportu/sdílení HTML: $e')),
+        );
       }
     }
   }

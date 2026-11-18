@@ -9,6 +9,7 @@ import '../../chronicle/models/moment_item.dart';
 import '../../chronicle/models/quick_note.dart';
 import '../../chronicle/presentation/event_detail_screen.dart';
 import '../../chronicle/presentation/event_form_screen.dart';
+import 'widgets/diary_cover_banner.dart';
 
 /// Hlavní obrazovka a rozcestník rodinné kroniky.
 ///
@@ -38,6 +39,7 @@ class _ChronicleScreenState extends State<ChronicleScreen> {
   EventCategory? _filterCategory;
   String? _filterParticipant;
   int? _filterYear;
+  int? _filterRating;
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
 
@@ -87,6 +89,7 @@ class _ChronicleScreenState extends State<ChronicleScreen> {
             if (_filterCategory != null && e.category != _filterCategory) return false;
             if (_filterParticipant != null && !e.participants.contains(_filterParticipant)) return false;
             if (_filterYear != null && e.startDate.year != _filterYear) return false;
+            if (_filterRating != null && (e.rating == null || e.rating! < _filterRating!)) return false;
             if (_searchQuery.isNotEmpty) {
               final text = '${e.title} ${e.location} ${e.description} ${e.extraNotes} ${e.participants.join(' ')}'
                   .toLowerCase();
@@ -263,12 +266,17 @@ class _ChronicleScreenState extends State<ChronicleScreen> {
           // Stav
           FilterChip(
             label: const Text('Vše'),
-            selected: _filterStatus == null && _filterCategory == null && _filterParticipant == null && _filterYear == null,
+            selected: _filterStatus == null &&
+                _filterCategory == null &&
+                _filterParticipant == null &&
+                _filterYear == null &&
+                _filterRating == null,
             onSelected: (_) => setState(() {
               _filterStatus = null;
               _filterCategory = null;
               _filterParticipant = null;
               _filterYear = null;
+              _filterRating = null;
             }),
           ),
           const SizedBox(width: 6),
@@ -284,6 +292,23 @@ class _ChronicleScreenState extends State<ChronicleScreen> {
             label: const Text('Publikované'),
             selected: _filterStatus == EventStatus.published,
             onSelected: (val) => setState(() => _filterStatus = val ? EventStatus.published : null),
+          ),
+          const SizedBox(width: 12),
+          Container(width: 1, height: 24, color: Colors.grey.shade400),
+          const SizedBox(width: 12),
+          // Hodnocení
+          FilterChip(
+            avatar: const Text('🤩', style: TextStyle(fontSize: 14)),
+            label: const Text('Jen pecky 🤩'),
+            selected: _filterRating == 5,
+            onSelected: (val) => setState(() => _filterRating = val ? 5 : null),
+          ),
+          const SizedBox(width: 6),
+          FilterChip(
+            avatar: const Text('😊', style: TextStyle(fontSize: 14)),
+            label: const Text('Skvělé 4+'),
+            selected: _filterRating == 4,
+            onSelected: (val) => setState(() => _filterRating = val ? 4 : null),
           ),
           const SizedBox(width: 12),
           Container(width: 1, height: 24, color: Colors.grey.shade400),
@@ -666,13 +691,18 @@ class _EventCard extends StatelessWidget {
                     ),
                   ],
                 ),
+              )
+            else if (event.category == EventCategory.diary)
+              DiaryCoverBanner(
+                event: event,
+                height: 100,
               ),
             Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (cover == null) ...[
+                  if (cover == null && event.category != EventCategory.diary) ...[
                     Row(
                       children: [
                         Text(event.category.emoji, style: const TextStyle(fontSize: 14)),
@@ -709,9 +739,31 @@ class _EventCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                   ],
-                  Text(
-                    event.title,
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          event.title,
+                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      if (event.hasRating) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.amber.shade300),
+                          ),
+                          child: Text(
+                            event.eventRating!.emoji,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Row(

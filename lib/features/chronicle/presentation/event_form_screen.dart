@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/config/app_config.dart';
 import '../../../core/di/service_locator.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/logging/log_entry.dart';
@@ -7,6 +8,8 @@ import '../../../core/utils/formatters.dart';
 import '../../../core/utils/id_generator.dart';
 import '../../chronicle/models/event_day.dart';
 import '../../chronicle/models/event_item.dart';
+import '../../chronicle/models/favorite_place.dart';
+import 'widgets/event_rating_bar.dart';
 
 /// Formulář pro vytvoření nové události nebo editaci existující.
 ///
@@ -46,6 +49,8 @@ class _EventFormScreenState extends State<EventFormScreen> {
   bool _isMultiDay = false;
   bool _isSaving = false;
   bool _isLoadingWeather = false;
+  bool _isGeocoding = false;
+  int? _rating;
 
   final List<String> _selectedParticipants = [];
 
@@ -82,6 +87,7 @@ class _EventFormScreenState extends State<EventFormScreen> {
     _startDate = e?.startDate ?? DateTime.now();
     _endDate = e?.endDate;
     _isMultiDay = e?.isMultiDay ?? false;
+    _rating = e?.rating;
 
     if (e != null) {
       _selectedParticipants.addAll(e.participants);
@@ -285,46 +291,109 @@ class _EventFormScreenState extends State<EventFormScreen> {
             const SizedBox(height: 16),
 
             // Místo a GPS souřadnice
+            // Rychlé předvolby oblíbených míst
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Častá místa (rychlá volba)',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                      ),
+                      icon: const Icon(Icons.add_location_alt_outlined, size: 14),
+                      label: const Text('Uložit aktuální', style: TextStyle(fontSize: 11)),
+                      onPressed: _saveCurrentAsFavoritePlace,
+                    ),
+                  ],
+                ),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (final place in AppConfig.instance.favoritePlaces)
+                      ActionChip(
+                        avatar: const Icon(Icons.place, size: 13),
+                        label: Text(place.name, style: const TextStyle(fontSize: 12)),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => _selectFavoritePlace(place),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
             TextFormField(
               controller: _locationController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Místo / Cíl',
-                hintText: 'např. Paprsek, Rychlebské hory',
-                prefixIcon: Icon(Icons.place_outlined),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    controller: _latController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Zeměpisná šířka (lat)',
-                      hintText: '50.2156',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
+                hintText: 'např. Paprsek, Olomouc, Jeseníky...',
+                prefixIcon: const Icon(Icons.place_outlined),
+                suffixIcon: IconButton(
+                  tooltip: 'Najít místo a stáhnout počasí (Open-Meteo)',
+                  icon: _isGeocoding
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.travel_explore),
+                  onPressed: _isGeocoding ? null : _geocodeAndFetchWeather,
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextFormField(
-                    controller: _lngController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Zeměpisná délka (lng)',
-                      hintText: '17.0153',
-                      isDense: true,
-                      border: OutlineInputBorder(),
+                border: const OutlineInputBorder(),
+              ),
+              onFieldSubmitted: (_) => _geocodeAndFetchWeather(),
+            ),
+            const SizedBox(height: 6),
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.symmetric(vertical: 4),
+              leading: const Icon(Icons.gps_fixed, size: 18),
+              title: const Text('Pokročilé / GPS souřadnice', style: TextStyle(fontSize: 13)),
+              subtitle: Text(
+                _latController.text.isNotEmpty && _lngController.text.isNotEmpty
+                    ? '${_latController.text}, ${_lngController.text}'
+                    : 'Zadejte ručně nebo použijte tlačítko hledání výše',
+                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+              ),
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _latController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Zeměpisná šířka (lat)',
+                          hintText: '50.2156',
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _lngController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Zeměpisná délka (lng)',
+                          hintText: '17.0153',
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
 
             // Počasí (Open-Meteo & editace)
             Card(
@@ -427,6 +496,28 @@ class _EventFormScreenState extends State<EventFormScreen> {
             ),
             const SizedBox(height: 16),
 
+            // Hodnocení dne / zážitku (Smajlíky)
+            Card(
+              elevation: 0,
+              color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Hodnocení dne / zážitku', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    EventRatingBar(
+                      selectedRating: _rating,
+                      onRatingChanged: (val) => setState(() => _rating = val),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
             // Účastníci (štítky)
             Text('Účastníci', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
@@ -490,6 +581,78 @@ class _EventFormScreenState extends State<EventFormScreen> {
         ),
       ),
     );
+  }
+
+  void _selectFavoritePlace(FavoritePlace place) {
+    setState(() {
+      _locationController.text = place.name;
+      if (place.latitude != null) _latController.text = place.latitude!.toString();
+      if (place.longitude != null) _lngController.text = place.longitude!.toString();
+    });
+    if (place.hasCoordinates) {
+      _fetchWeatherFromOpenMeteo();
+    }
+  }
+
+  Future<void> _saveCurrentAsFavoritePlace() async {
+    final name = _locationController.text.trim();
+    final lat = double.tryParse(_latController.text.trim());
+    final lng = double.tryParse(_lngController.text.trim());
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Zadejte nejprve název místa do pole Místo/Cíl.')),
+      );
+      return;
+    }
+    final place = FavoritePlace(name: name, latitude: lat, longitude: lng);
+    await AppConfig.instance.addFavoritePlace(place);
+    if (mounted) {
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Místo „$name“ bylo uloženo mezi oblíbená místa.')),
+      );
+    }
+  }
+
+  Future<void> _geocodeAndFetchWeather() async {
+    final name = _locationController.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Zadejte nejprve název místa do pole Místo/Cíl.')),
+      );
+      return;
+    }
+
+    setState(() => _isGeocoding = true);
+    try {
+      final place = await ServiceLocator.geocoding.searchFirst(name);
+      if (place != null && mounted) {
+        setState(() {
+          if (place.latitude != null) _latController.text = place.latitude!.toString();
+          if (place.longitude != null) _lngController.text = place.longitude!.toString();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Poloha nalezena: ${place.name} (${place.latitude?.toStringAsFixed(3)}, ${place.longitude?.toStringAsFixed(3)})',
+            ),
+          ),
+        );
+        await _fetchWeatherFromOpenMeteo();
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Místo nebylo v geokodéru nalezeno. Zkuste upřesnit název.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Chyba při hledání polohy: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isGeocoding = false);
+    }
   }
 
   Future<void> _fetchWeatherFromOpenMeteo() async {
@@ -600,6 +763,8 @@ class _EventFormScreenState extends State<EventFormScreen> {
         durationMinutes: dur,
         extraNotes: _extraNotesController.text.trim(),
         coverPhotoPath: widget.existingEvent?.coverPhotoPath,
+        rating: _rating,
+        relatedEventIds: widget.existingEvent?.relatedEventIds ?? const [],
         locationGuideText: widget.existingEvent?.locationGuideText,
         aiStory: widget.existingEvent?.aiStory,
         participants: _selectedParticipants,

@@ -5,6 +5,28 @@ import 'event_day.dart';
 import 'moment_item.dart';
 import 'quick_note.dart';
 
+/// Hodnocení události smajlíky (1 až 5).
+enum EventRating {
+  awesome(5, '🤩', 'Pecka / Top zážitek'),
+  great(4, '😊', 'Super zážitek'),
+  average(3, '😐', 'Ušlo to / Průměr'),
+  poor(2, '😕', 'Nic moc'),
+  terrible(1, '😫', 'Propadák / Náročné');
+
+  const EventRating(this.stars, this.emoji, this.label);
+  final int stars;
+  final String emoji;
+  final String label;
+
+  static EventRating? fromStars(int? stars) {
+    if (stars == null) return null;
+    for (final r in EventRating.values) {
+      if (r.stars == stars) return r;
+    }
+    return null;
+  }
+}
+
 /// Stav záznamu v kronice.
 enum EventStatus {
   draft('Rozpracováno', Icons.edit_note, Colors.orange),
@@ -73,6 +95,8 @@ class EventItem {
     this.durationMinutes,
     this.extraNotes = '',
     this.coverPhotoPath,
+    this.rating,
+    this.relatedEventIds = const [],
     this.locationGuideText,
     this.aiStory,
     this.participants = const [],
@@ -113,6 +137,12 @@ class EventItem {
   /// Cesta nebo URL k vybrané úvodní / titulní fotce události.
   final String? coverPhotoPath;
 
+  /// Hodnocení události smajlíky (1 až 5).
+  final int? rating;
+
+  /// ID souvisejících propojených událostí (obousměrné hyperlinky).
+  final List<String> relatedEventIds;
+
   /// Fáze A AI: Průvodce lokalitou a zajímavosti
   final String? locationGuideText;
 
@@ -135,6 +165,9 @@ class EventItem {
   bool get hasDays => days.isNotEmpty;
   int get durationDays => endDate == null ? 1 : Fmt.daysInclusive(startDate, endDate!);
   bool get hasStory => aiStory != null && aiStory!.trim().isNotEmpty;
+  bool get hasRating => rating != null && rating! >= 1 && rating! <= 5;
+  EventRating? get eventRating => EventRating.fromStars(rating);
+  bool get hasRelatedEvents => relatedEventIds.isNotEmpty;
   bool get hasLocationGuide => locationGuideText != null && locationGuideText!.trim().isNotEmpty;
   bool get hasLocation => latitude != null && longitude != null;
   bool get isInPast => (endDate ?? startDate).isBefore(Fmt.dateOnly(DateTime.now()));
@@ -198,6 +231,9 @@ class EventItem {
     String? extraNotes,
     String? coverPhotoPath,
     bool clearCoverPhoto = false,
+    int? rating,
+    bool clearRating = false,
+    List<String>? relatedEventIds,
     String? locationGuideText,
     String? aiStory,
     List<String>? participants,
@@ -226,6 +262,8 @@ class EventItem {
       durationMinutes: durationMinutes ?? this.durationMinutes,
       extraNotes: extraNotes ?? this.extraNotes,
       coverPhotoPath: clearCoverPhoto ? null : (coverPhotoPath ?? this.coverPhotoPath),
+      rating: clearRating ? null : (rating ?? this.rating),
+      relatedEventIds: relatedEventIds ?? this.relatedEventIds,
       locationGuideText: locationGuideText ?? this.locationGuideText,
       aiStory: aiStory ?? this.aiStory,
       participants: participants ?? this.participants,
@@ -260,6 +298,8 @@ class EventItem {
         'durationMinutes': durationMinutes,
         'extraNotes': extraNotes,
         'coverPhotoPath': coverPhotoPath,
+        'rating': rating,
+        'relatedEventIds': relatedEventIds,
         'locationGuideText': locationGuideText,
         'aiStory': aiStory,
         'participants': participants,
@@ -291,6 +331,8 @@ class EventItem {
       durationMinutes: (json['durationMinutes'] as num?)?.toInt(),
       extraNotes: json['extraNotes'] as String? ?? '',
       coverPhotoPath: json['coverPhotoPath'] as String?,
+      rating: (json['rating'] as num?)?.toInt(),
+      relatedEventIds: ((json['relatedEventIds'] as List?) ?? const []).map((e) => e.toString()).toList(),
       locationGuideText: json['locationGuideText'] as String?,
       aiStory: json['aiStory'] as String?,
       participants: ((json['participants'] as List?) ?? const []).map((e) => e.toString()).toList(),

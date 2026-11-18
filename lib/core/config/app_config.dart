@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../logging/app_logger.dart';
 import '../logging/log_entry.dart';
+import '../../features/chronicle/models/favorite_place.dart';
 
 /// Režim AI průvodce.
 enum AiMode {
@@ -59,6 +60,7 @@ class AppConfig extends ChangeNotifier {
   static const String _kTheme = 'config.theme_mode';
   static const String _kBackend = 'config.storage_backend';
   static const String _kFamily = 'config.family_name';
+  static const String _kFavoritePlaces = 'config.favorite_places';
 
   SharedPreferences? _prefs;
   bool _loaded = false;
@@ -69,6 +71,7 @@ class AppConfig extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.system;
   StorageBackend _storageBackend = StorageBackend.local;
   String _familyName = 'Muchovi';
+  List<FavoritePlace> _favoritePlaces = FavoritePlace.defaults;
 
   bool get isLoaded => _loaded;
 
@@ -109,6 +112,22 @@ class AppConfig extends ChangeNotifier {
       _storageBackend = _enumByName(StorageBackend.values, p.getString(_kBackend), StorageBackend.local);
       if (!_storageBackend.isAvailable) _storageBackend = StorageBackend.local;
       _familyName = p.getString(_kFamily) ?? 'Muchovi';
+
+      final favStr = p.getString(_kFavoritePlaces);
+      if (favStr != null && favStr.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(favStr) as List;
+          _favoritePlaces = decoded
+              .whereType<Map>()
+              .map((m) => FavoritePlace.fromJson(m.cast<String, dynamic>()))
+              .toList();
+        } catch (_) {
+          _favoritePlaces = FavoritePlace.defaults;
+        }
+      } else {
+        _favoritePlaces = FavoritePlace.defaults;
+      }
+
       _loaded = true;
       AppLogger.I.info(LogModule.config, 'config_loaded', metrics: {
         'duration_ms': sw.elapsedMilliseconds,
@@ -178,6 +197,30 @@ class AppConfig extends ChangeNotifier {
     _familyName = value.trim().isEmpty ? 'Muchovi' : value.trim();
     await _prefs?.setString(_kFamily, _familyName);
     notifyListeners();
+  }
+
+  List<FavoritePlace> get favoritePlaces => List.unmodifiable(_favoritePlaces);
+
+  Future<void> addFavoritePlace(FavoritePlace place) async {
+    final existingIndex = _favoritePlaces.indexWhere((p) => p.name.toLowerCase() == place.name.toLowerCase());
+    if (existingIndex >= 0) {
+      _favoritePlaces[existingIndex] = place;
+    } else {
+      _favoritePlaces = [..._favoritePlaces, place];
+    }
+    await _saveFavoritePlaces();
+    notifyListeners();
+  }
+
+  Future<void> removeFavoritePlace(String name) async {
+    _favoritePlaces = _favoritePlaces.where((p) => p.name.toLowerCase() != name.toLowerCase()).toList();
+    await _saveFavoritePlaces();
+    notifyListeners();
+  }
+
+  Future<void> _saveFavoritePlaces() async {
+    final encoded = jsonEncode(_favoritePlaces.map((p) => p.toJson()).toList());
+    await _prefs?.setString(_kFavoritePlaces, encoded);
   }
 
   /// Kontext pro AI log export (bez citlivých údajů).
