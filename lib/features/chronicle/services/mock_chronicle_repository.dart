@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../core/di/service_locator.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/logging/log_entry.dart';
 import '../../../core/utils/formatters.dart';
@@ -52,6 +53,25 @@ class MockChronicleRepository implements ChronicleRepository {
         _events.clear();
       }
     }
+
+    // Pokud je interní úložiště prázdné (např. po nové instalaci nebo odinstalaci),
+    // nejprve ověříme, zda na zařízení neexistuje automatická záloha v trvalém úložišti
+    // (Download/FlyLog nebo Documents/FlyLog), která odinstalaci přežila!
+    if (_events.isEmpty) {
+      try {
+        final recovered = await ServiceLocator.backup.findAutoBackupEvents();
+        if (recovered != null && recovered.isNotEmpty) {
+          for (final e in recovered) {
+            _events[e.id] = e;
+          }
+          source = 'auto_recovered_from_persistent_storage';
+          await _persist();
+        }
+      } catch (e) {
+        AppLogger.I.warn(LogModule.chronicle, 'auto_recovery_check_failed', error: e);
+      }
+    }
+
     if (_events.isEmpty && seedSampleData && raw == null) {
       for (final e in buildSampleEvents()) {
         _events[e.id] = e;
@@ -266,6 +286,8 @@ class MockChronicleRepository implements ChronicleRepository {
     try {
       final json = jsonEncode(_events.values.map((e) => e.toJson()).toList());
       await _prefs?.setString(storageKey, json);
+      // Tiché automatické zrcadlení do trvalého úložiště (Download/FlyLog), které přežije odinstalaci
+      unawaited(ServiceLocator.backup.autoBackup(_events.values.toList()));
       return json.length;
     } catch (e, st) {
       AppLogger.I.error(LogModule.chronicle, 'persist_failed', error: e, stackTrace: st);

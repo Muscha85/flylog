@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../core/config/app_config.dart';
 import '../../../core/di/service_locator.dart';
@@ -254,29 +257,96 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Text('Záloha a obnova dat (JSON)', style: theme.textTheme.titleSmall),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Bezpečný export všech zápisů kroniky do JSON souboru pro zálohu v telefonu nebo na Google Disku.',
-                            style: theme.textTheme.bodySmall?.copyWith(color: scheme.outline),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.green.shade300),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(Icons.shield_outlined, color: Colors.green.shade800, size: 22),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Automatická ochrana dat aktivní',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                          color: Colors.green.shade900,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Každý zápis i úprava se automaticky zrcadlí do trvalé složky Download/FlyLog na vašem zařízení. '
+                                        'Data jsou v bezpečí i při odinstalaci aplikace a při reinstalaci se automaticky načtou.',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.green.shade900.withValues(alpha: 0.8),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                          const SizedBox(height: 12),
-                          Row(
+                          const SizedBox(height: 16),
+                          Text(
+                            'Zálohování (Export)',
+                            style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
                             children: [
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  icon: const Icon(Icons.file_upload_outlined),
-                                  label: const Text('Exportovat zálohu'),
-                                  onPressed: _exportBackup,
-                                ),
+                              FilledButton.icon(
+                                icon: const Icon(Icons.download_for_offline_outlined, size: 18),
+                                label: const Text('Uložit do Download'),
+                                onPressed: _saveBackupToDownloads,
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: FilledButton.tonalIcon(
-                                  icon: const Icon(Icons.file_download_outlined),
-                                  label: const Text('Obnovit ze zálohy'),
-                                  onPressed: _importBackup,
-                                ),
+                              OutlinedButton.icon(
+                                icon: const Icon(Icons.copy_outlined, size: 18),
+                                label: const Text('Kopírovat JSON'),
+                                onPressed: _copyBackupToClipboard,
+                              ),
+                              OutlinedButton.icon(
+                                icon: const Icon(Icons.share_outlined, size: 18),
+                                label: const Text('Sdílet (Disk/Email)'),
+                                onPressed: _shareBackup,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 20),
+                          Text(
+                            'Obnova dat (Import)',
+                            style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              FilledButton.tonalIcon(
+                                icon: const Icon(Icons.find_in_page_outlined, size: 18),
+                                label: const Text('Najít zálohy v telefonu'),
+                                onPressed: _scanAndRestoreBackups,
+                              ),
+                              OutlinedButton.icon(
+                                icon: const Icon(Icons.folder_open_outlined, size: 18),
+                                label: const Text('Vybrat soubor (.json)'),
+                                onPressed: _importFromFilePicker,
+                              ),
+                              OutlinedButton.icon(
+                                icon: const Icon(Icons.paste_outlined, size: 18),
+                                label: const Text('Vložit text ze schránky'),
+                                onPressed: _importFromClipboard,
                               ),
                             ],
                           ),
@@ -342,42 +412,194 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _exportBackup() async {
+  Future<void> _saveBackupToDownloads() async {
     try {
-      final path = await ServiceLocator.backup.exportBackup();
+      final repo = ServiceLocator.chronicle;
+      final events = await repo.getEvents();
+      final path = await ServiceLocator.backup.saveBackupToDownloads(events);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Záloha uložena a připravena ke sdílení:\n$path')),
+        showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            icon: const Icon(Icons.check_circle, color: Colors.green, size: 36),
+            title: const Text('Záloha bezpečně uložena'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Uloženo ${events.length} událostí do trvalého souboru:'),
+                const SizedBox(height: 8),
+                SelectableText(
+                  path,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Tento soubor se NESMAŽE ani při odinstalaci aplikace. Najdete ho ve své složce Stažené položky (Download).',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
+            actions: [
+              FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Rozumím')),
+            ],
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Chyba při exportu: $e')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Chyba při ukládání: $e')));
       }
     }
   }
 
-  Future<void> _importBackup() async {
+  Future<void> _copyBackupToClipboard() async {
     try {
-      final res = await ServiceLocator.backup.importBackup();
+      final repo = ServiceLocator.chronicle;
+      final events = await repo.getEvents();
+      await ServiceLocator.backup.copyBackupToClipboard(events);
       if (mounted) {
-        if (res.success) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Úspěšně obnoveno ${res.importedCount} událostí!')),
-          );
-        } else if (res.message != 'Výběr souboru byl zrušen.') {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(res.message)),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Kompletní JSON záloha (${events.length} událostí) byla zkopírována do schránky!'),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Chyba při kopírování: $e')));
+      }
+    }
+  }
+
+  Future<void> _shareBackup() async {
+    try {
+      final repo = ServiceLocator.chronicle;
+      final events = await repo.getEvents();
+      final path = await ServiceLocator.backup.shareBackup(events);
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Chyba při obnově dat: $e')),
+          SnackBar(content: Text('Záloha uložena do $path a připravena ke sdílení.')),
         );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Chyba při sdílení: $e')));
+      }
+    }
+  }
+
+  Future<void> _scanAndRestoreBackups() async {
+    try {
+      final files = await ServiceLocator.backup.getAvailableBackupFiles();
+      if (!mounted) return;
+
+      if (files.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Ve složkách Download a Documents nebyly nalezeny žádné zálohy FlyLog.')),
+        );
+        return;
+      }
+
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Nalezené zálohy na zařízení'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: files.length,
+              separatorBuilder: (_, __) => const Divider(),
+              itemBuilder: (c, i) {
+                final file = files[i];
+                final name = file.path.split(Platform.pathSeparator).last;
+                final date = file.lastModifiedSync();
+                final sizeKb = (file.lengthSync() / 1024).toStringAsFixed(1);
+
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.description_outlined, color: Colors.blue),
+                  title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  subtitle: Text('${date.day}. ${date.month}. ${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')} · $sizeKb kB'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 14),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final res = await ServiceLocator.backup.importFromFile(file);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(res.message)),
+                      );
+                    }
+                  },
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Zavřít')),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Chyba při hledání: $e')));
+      }
+    }
+  }
+
+  Future<void> _importFromFilePicker() async {
+    final res = await ServiceLocator.backup.importBackupWithPicker();
+    if (mounted && res.message != 'Výběr souboru byl zrušen.') {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message)));
+    }
+  }
+
+  Future<void> _importFromClipboard() async {
+    final textController = TextEditingController();
+    try {
+      final clipData = await Clipboard.getData('text/plain');
+      if (clipData?.text != null && clipData!.text!.contains('events')) {
+        textController.text = clipData.text!;
+      }
+    } catch (_) {}
+
+    if (!mounted) return;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Vložit zálohu (JSON text)'),
+        content: SizedBox(
+          width: 500,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Vložte kód zálohy zkopírovaný z emailu, poznámek nebo zprávy:'),
+              const SizedBox(height: 10),
+              TextField(
+                controller: textController,
+                maxLines: 8,
+                decoration: const InputDecoration(
+                  hintText: '{\n  "version": 1,\n  "events": [...]\n}',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Zrušit')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Obnovit z textu')),
+        ],
+      ),
+    );
+
+    if (ok == true && textController.text.trim().isNotEmpty) {
+      final res = await ServiceLocator.backup.importFromJsonString(textController.text);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message)));
       }
     }
   }

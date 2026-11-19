@@ -368,6 +368,18 @@ class MediaService {
   }
 
   Future<Directory> _photosDirectory() async {
+    // 1. Zkusíme veřejnou složku Obrázky (Pictures/FlyLog), která se nesmaže ani při odinstalaci aplikace
+    if (Platform.isAndroid) {
+      try {
+        final picturesDir = Directory('/storage/emulated/0/Pictures/FlyLog');
+        if (!await picturesDir.exists()) {
+          await picturesDir.create(recursive: true);
+        }
+        return picturesDir;
+      } catch (_) {}
+    }
+
+    // 2. Fallback na standardní složku dokumentů
     final docs = await getApplicationDocumentsDirectory();
     final dir = Directory('${docs.path}${Platform.pathSeparator}flylog_photos');
     if (!await dir.exists()) {
