@@ -46,7 +46,7 @@ jobs:
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: flutter build apk --release
-        run: flutter build apk --release
+        run: flutter build apk --release || flutter build apk --release --verbose
 
       - name: Uložení artefaktu
         uses: actions/upload-artifact@v4
