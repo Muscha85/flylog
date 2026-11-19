@@ -99,8 +99,8 @@ class BackupService {
           await file.writeAsString(jsonStr, encoding: utf8);
         } catch (_) {}
       }
-    } catch (e, st) {
-      AppLogger.I.warn(_module, 'auto_backup_failed', error: e, stackTrace: st);
+    } catch (e) {
+      AppLogger.I.warn(_module, 'auto_backup_failed', error: e);
     }
   }
 

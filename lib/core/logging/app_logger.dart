@@ -87,8 +87,21 @@ class AppLogger extends ChangeNotifier {
   LogEntry info(String module, String action, {Map<String, Object?>? metrics}) =>
       log(module: module, level: LogLevel.info, action: action, metrics: metrics);
 
-  LogEntry warn(String module, String action, {Map<String, Object?>? metrics, Object? error}) =>
-      log(module: module, level: LogLevel.warn, action: action, metrics: metrics, error: error);
+  LogEntry warn(
+    String module,
+    String action, {
+    Map<String, Object?>? metrics,
+    Object? error,
+    StackTrace? stackTrace,
+  }) =>
+      log(
+        module: module,
+        level: LogLevel.warn,
+        action: action,
+        metrics: metrics,
+        error: error,
+        stackTrace: stackTrace,
+      );
 
   LogEntry error(
     String module,
